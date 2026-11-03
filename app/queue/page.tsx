@@ -19,15 +19,27 @@ export default async function QueuePage() {
   // Fetch comments requiring review
   const { data: rawComments } = await supabase
     .from('comments')
-    .select('*, page:facebook_pages(*), post:posts(*), moderation_result:moderation_results(*), actions:moderation_actions(*)')
-    .eq('moderation_status', 'review_required')
+    .select(
+      '*, page:facebook_pages(*), post:posts(*), assigned_admin:admin_users!comments_assigned_to_fkey(*), moderation_result:moderation_results(*), actions:moderation_actions(*)'
+    )
+    .in('moderation_status', ['review_required', 'pending'])
     .order('created_time', { ascending: false });
+
+  const { data: moderators } = await supabase
+    .from('admin_users')
+    .select('*')
+    .eq('is_active', true)
+    .order('role', { ascending: false });
 
   const comments = (rawComments || []) as CommentWithDetails[];
 
   return (
     <AppShell admin={admin} title="Moderation Decision Queue">
-      <QueueView initialComments={comments} />
+      <QueueView
+        initialComments={comments}
+        currentAdmin={admin}
+        moderators={moderators || []}
+      />
     </AppShell>
   );
 }

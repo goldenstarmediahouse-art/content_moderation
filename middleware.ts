@@ -16,7 +16,9 @@ export async function middleware(request: NextRequest) {
   if (
     path.startsWith('/_next') ||
     path.startsWith('/favicon.ico') ||
-    path.startsWith('/api/webhooks')
+    path.startsWith('/api/webhooks') ||
+    path === '/api/auth/login' ||
+    path === '/api/auth/logout'
   ) {
     return response;
   }

@@ -21,7 +21,17 @@ export type ModerationStatus =
   | 'flagged'
   | 'hidden'
   | 'restored'
-  | 'review_required';
+  | 'review_required'
+  | 'escalated'
+  | 'deleted';
+
+export type EscalationPriority = 'low' | 'medium' | 'high' | 'urgent';
+
+export type ExternalActionStatus =
+  | 'none'
+  | 'pending_facebook_sync'
+  | 'synced_facebook'
+  | 'failed_facebook';
 
 export type SeverityLevel = 'safe' | 'low' | 'medium' | 'high' | 'critical';
 
@@ -38,7 +48,14 @@ export type ModerationActionType =
   | 'hidden'
   | 'restored'
   | 'flagged'
-  | 'threat_alerted';
+  | 'threat_alerted'
+  | 'escalated'
+  | 'deleted'
+  | 'overridden'
+  | 'assigned'
+  | 'reassigned'
+  | 'claimed'
+  | 'released';
 
 export type ActorType = 'ai' | 'super_admin' | 'moderator' | 'system';
 
@@ -47,7 +64,10 @@ export type NotificationType =
   | 'review_required'
   | 'integration_error'
   | 'job_failure'
-  | 'system';
+  | 'system'
+  | 'assignment'
+  | 'reassignment'
+  | 'escalation';
 
 export type Database = {
   public: {
@@ -208,6 +228,12 @@ export type Database = {
           created_time: string;
           is_hidden: boolean;
           moderation_status: ModerationStatus;
+          assigned_to: string | null;
+          assigned_at: string | null;
+          is_escalated: boolean;
+          escalation_reason: string | null;
+          escalation_priority: EscalationPriority | null;
+          external_action_status: ExternalActionStatus;
           created_at: string;
           updated_at: string;
         };
@@ -225,6 +251,12 @@ export type Database = {
           created_time: string;
           is_hidden?: boolean;
           moderation_status?: ModerationStatus;
+          assigned_to?: string | null;
+          assigned_at?: string | null;
+          is_escalated?: boolean;
+          escalation_reason?: string | null;
+          escalation_priority?: EscalationPriority | null;
+          external_action_status?: ExternalActionStatus;
           created_at?: string;
           updated_at?: string;
         };
@@ -242,8 +274,38 @@ export type Database = {
           created_time?: string;
           is_hidden?: boolean;
           moderation_status?: ModerationStatus;
+          assigned_to?: string | null;
+          assigned_at?: string | null;
+          is_escalated?: boolean;
+          escalation_reason?: string | null;
+          escalation_priority?: EscalationPriority | null;
+          external_action_status?: ExternalActionStatus;
           created_at?: string;
           updated_at?: string;
+        };
+        Relationships: [];
+      };
+      comment_notes: {
+        Row: {
+          id: string;
+          comment_id: string;
+          admin_id: string;
+          note: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          comment_id: string;
+          admin_id: string;
+          note: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          comment_id?: string;
+          admin_id?: string;
+          note?: string;
+          created_at?: string;
         };
         Relationships: [];
       };
@@ -489,6 +551,17 @@ export type Database = {
 export type CommentWithDetails = Database['public']['Tables']['comments']['Row'] & {
   page?: Database['public']['Tables']['facebook_pages']['Row'];
   post?: Database['public']['Tables']['posts']['Row'];
+  assigned_admin?: {
+    id: string;
+    full_name: string | null;
+    email: string;
+    role: AdminRole;
+  } | null;
   moderation_result?: Database['public']['Tables']['moderation_results']['Row'];
-  actions?: Database['public']['Tables']['moderation_actions']['Row'][];
+  actions?: (Database['public']['Tables']['moderation_actions']['Row'] & {
+    admin?: { full_name: string | null; email: string; role: AdminRole } | null;
+  })[];
+  notes?: (Database['public']['Tables']['comment_notes']['Row'] & {
+    admin?: { full_name: string | null; email: string; role: AdminRole } | null;
+  })[];
 };
