@@ -2,12 +2,13 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Shield, Lock, Mail, AlertCircle, ArrowRight } from 'lucide-react';
+import { Lock, Mail, AlertCircle, ArrowRight, Eye, EyeOff } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -39,16 +40,27 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-charcoal-950 flex flex-col justify-center items-center px-4 select-none">
-      <div className="max-w-md w-full space-y-6">
+    <div
+      className="relative isolate min-h-screen bg-charcoal-950 flex flex-col justify-center items-center px-4 select-none"
+    >
+      <img
+        src="/IMG_4190.JPG"
+        alt=""
+        aria-hidden="true"
+        className="absolute inset-0 z-0 h-full w-full object-cover object-center"
+      />
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 z-0 bg-charcoal-950/70"
+      />
+      <div className="relative z-10 w-full max-w-md space-y-6">
         {/* Header Branding */}
         <div className="text-center space-y-2">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded bg-charcoal-900 border border-charcoal-800 text-charcoal-200">
-            <Shield className="w-6 h-6" />
-          </div>
-          <h1 className="text-lg font-bold uppercase tracking-wider text-charcoal-100">
-            Golden Star Media House
-          </h1>
+          <img
+            src="/golden%20star%20logo.png"
+            alt="Golden Star Media House"
+            className="mx-auto h-auto w-64"
+          />
           <p className="text-xs text-charcoal-400">
             Church Facebook Comment Moderation Platform
           </p>
@@ -97,13 +109,26 @@ export default function LoginPage() {
               <div className="relative">
                 <Lock className="w-4 h-4 text-charcoal-500 absolute left-3 top-3 pointer-events-none" />
                 <input
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••••••"
-                  className="w-full pl-9 pr-3 py-2 bg-charcoal-950 border border-charcoal-800 rounded text-xs text-charcoal-100 placeholder-charcoal-600 focus:outline-none focus:border-charcoal-600 transition-colors"
+                  className="w-full pl-9 pr-10 py-2 bg-charcoal-950 border border-charcoal-800 rounded text-xs text-charcoal-100 placeholder-charcoal-600 focus:outline-none focus:border-charcoal-600 transition-colors"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((visible) => !visible)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-pressed={showPassword}
+                  className="absolute right-3 top-2.5 text-charcoal-500 hover:text-charcoal-300 focus:outline-none focus:text-charcoal-300"
+                >
+                  {showPassword ? (
+                    <EyeOff className="w-4 h-4" aria-hidden="true" />
+                  ) : (
+                    <Eye className="w-4 h-4" aria-hidden="true" />
+                  )}
+                </button>
               </div>
             </div>
 

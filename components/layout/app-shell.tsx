@@ -1,6 +1,5 @@
 import React from 'react';
-import { Sidebar } from './sidebar';
-import { TopNav } from './top-nav';
+import { AppNavigation } from './app-navigation';
 import { CurrentAdmin } from '@/lib/auth/session';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 
@@ -58,26 +57,18 @@ export async function AppShell({ admin, title, children }: AppShellProps) {
 
   return (
     <div className="min-h-screen bg-charcoal-950 text-charcoal-200 flex">
-      {/* Persistent Left Sidebar with dynamic badge counters */}
-      <Sidebar
+      <AppNavigation
         admin={admin}
+        title={title}
         pendingCount={pendingCount}
         unreadNotifications={unreadNotifications}
         myAssignedCount={myAssignedCount}
         escalationsCount={escalationsCount}
-      />
-
-      {/* Main Content Area */}
-      <div className="flex-1 ml-64 flex flex-col min-h-screen">
-        <TopNav
-          title={title}
-          admin={admin}
-          unreadNotifications={unreadNotifications}
-        />
-        <main className="flex-1 p-6 max-w-7xl w-full mx-auto">
+      >
+        <main className="mx-auto w-full max-w-7xl min-w-0 flex-1 p-4 sm:p-6">
           {children}
         </main>
-      </div>
+      </AppNavigation>
     </div>
   );
 }

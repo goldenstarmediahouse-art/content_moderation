@@ -3,16 +3,24 @@
 import React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Bell, LogOut } from 'lucide-react';
+import { Bell, LogOut, Menu, X } from 'lucide-react';
 import { CurrentAdmin } from '@/lib/auth/session';
 
 interface TopNavProps {
   title: string;
   admin: CurrentAdmin;
   unreadNotifications?: number;
+  mobileMenuOpen: boolean;
+  onMobileMenuToggle: () => void;
 }
 
-export function TopNav({ title, admin, unreadNotifications = 0 }: TopNavProps) {
+export function TopNav({
+  title,
+  admin,
+  unreadNotifications = 0,
+  mobileMenuOpen,
+  onMobileMenuToggle,
+}: TopNavProps) {
   const router = useRouter();
 
   async function handleSignOut() {
@@ -26,14 +34,23 @@ export function TopNav({ title, admin, unreadNotifications = 0 }: TopNavProps) {
   }
 
   return (
-    <header className="h-16 bg-charcoal-900 border-b border-charcoal-800 px-6 flex items-center justify-between sticky top-0 z-20">
-      <div className="flex items-center space-x-3">
-        <h1 className="text-base font-semibold text-charcoal-100 tracking-tight">
+    <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-2 border-b border-charcoal-800 bg-charcoal-900 px-3 sm:px-6">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+        <button
+          type="button"
+          onClick={onMobileMenuToggle}
+          aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+          aria-expanded={mobileMenuOpen}
+          className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded text-charcoal-300 hover:bg-charcoal-800 md:hidden"
+        >
+          {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        </button>
+        <h1 className="truncate text-sm font-semibold tracking-tight text-charcoal-100 sm:text-base">
           {title}
         </h1>
       </div>
 
-      <div className="flex items-center space-x-4">
+      <div className="flex flex-shrink-0 items-center gap-1 sm:gap-4">
         {/* Notification bell */}
         <Link
           href="/notifications"
@@ -47,10 +64,10 @@ export function TopNav({ title, admin, unreadNotifications = 0 }: TopNavProps) {
         </Link>
 
         {/* Divider */}
-        <div className="h-4 w-px bg-charcoal-800" />
+        <div className="hidden h-4 w-px bg-charcoal-800 sm:block" />
 
         {/* User Info & Sign Out */}
-        <div className="flex items-center space-x-3 text-xs">
+        <div className="flex items-center gap-2 text-xs sm:gap-3">
           <span className="text-charcoal-400 hidden sm:inline">
             {admin.email}
           </span>
@@ -60,7 +77,7 @@ export function TopNav({ title, admin, unreadNotifications = 0 }: TopNavProps) {
             title="Sign out of administration system"
           >
             <LogOut className="w-3.5 h-3.5" />
-            <span>Sign Out</span>
+            <span className="hidden sm:inline">Sign Out</span>
           </button>
         </div>
       </div>

@@ -11,16 +11,36 @@ export async function middleware(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-  // Do not block public webhooks or static assets
   const path = request.nextUrl.pathname;
+  let validSupabaseUrl = false;
+  try {
+    const parsedUrl = new URL(supabaseUrl);
+    validSupabaseUrl =
+      (parsedUrl.protocol === 'https:' || parsedUrl.protocol === 'http:') &&
+      Boolean(parsedUrl.host);
+  } catch {
+    validSupabaseUrl = false;
+  }
+
   if (
+    path === '/api/auth/login' ||
+    path === '/api/auth/logout' ||
     path.startsWith('/_next') ||
     path.startsWith('/favicon.ico') ||
     path.startsWith('/api/webhooks') ||
-    path === '/api/auth/login' ||
-    path === '/api/auth/logout'
+    /\.(?:svg|png|jpe?g|gif|webp)$/.test(path.toLowerCase())
   ) {
     return response;
+  }
+
+  if (!validSupabaseUrl || !supabaseAnonKey) {
+    if (path === '/login') return response;
+
+    console.error('Supabase authentication is unavailable: required environment variables are missing or invalid.');
+    return NextResponse.json(
+      { error: 'Authentication is temporarily unavailable. Supabase configuration is missing or invalid.' },
+      { status: 503 }
+    );
   }
 
   // Create supabase client to refresh cookies

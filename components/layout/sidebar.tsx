@@ -13,7 +13,6 @@ import {
   Bell,
   Users,
   Settings,
-  Shield,
   UserCheck,
   User,
   ArrowUpRight,
@@ -28,6 +27,8 @@ interface SidebarProps {
   unreadNotifications?: number;
   myAssignedCount?: number;
   escalationsCount?: number;
+  mobileOpen?: boolean;
+  onNavigate?: () => void;
 }
 
 export function Sidebar({
@@ -36,6 +37,8 @@ export function Sidebar({
   unreadNotifications = 0,
   myAssignedCount = 0,
   escalationsCount = 0,
+  mobileOpen = false,
+  onNavigate,
 }: SidebarProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -147,23 +150,21 @@ export function Sidebar({
   ];
 
   return (
-    <aside className="w-64 flex-shrink-0 bg-charcoal-900 border-r border-charcoal-800 flex flex-col justify-between h-screen fixed left-0 top-0 select-none z-30">
+    <aside
+      className={`fixed left-0 top-0 z-40 flex h-screen w-64 flex-shrink-0 select-none flex-col justify-between border-r border-charcoal-800 bg-charcoal-900 transition-transform duration-200 ${
+        mobileOpen
+          ? 'visible translate-x-0'
+          : 'invisible -translate-x-full md:visible md:translate-x-0'
+      }`}
+    >
       <div className="overflow-y-auto">
         {/* Brand Header */}
-        <div className="h-16 flex items-center px-5 border-b border-charcoal-800">
-          <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 rounded bg-charcoal-800 border border-charcoal-700 flex items-center justify-center text-charcoal-200">
-              <Shield className="w-4 h-4 text-charcoal-200" />
-            </div>
-            <div>
-              <div className="text-xs font-bold uppercase tracking-wider text-charcoal-100">
-                Golden Star Media
-              </div>
-              <div className="text-[11px] text-charcoal-500 font-medium tracking-tight">
-                Church Comment System
-              </div>
-            </div>
-          </div>
+        <div className="h-20 flex items-center justify-center px-4 border-b border-charcoal-800">
+          <img
+            src="/golden%20star%20logo.png"
+            alt="Golden Star Media House"
+            className="h-auto w-40"
+          />
         </div>
 
         {/* Navigation Sections */}
@@ -188,6 +189,7 @@ export function Sidebar({
                     <Link
                       key={item.href}
                       href={item.href}
+                      onClick={onNavigate}
                       className={`flex items-center justify-between px-3 py-2 rounded text-xs font-medium transition-colors ${
                         isActive
                           ? 'bg-charcoal-800 text-charcoal-100 border border-charcoal-700'
