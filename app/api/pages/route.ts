@@ -50,7 +50,7 @@ async function subscribeAndSaveStatus(
   pageAccessToken: string,
   tokenInspection?: Awaited<ReturnType<typeof inspectPageToken>>
 ): Promise<PageWebhookResult> {
-  const inspection = tokenInspection || await inspectPageToken(pageAccessToken);
+  const inspection = tokenInspection || await inspectPageToken(pageAccessToken, pageId);
   let result: PageWebhookResult;
 
   if (!inspection.valid) {
@@ -158,7 +158,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Test token validity with Meta
-      const tokenTest = await inspectPageToken(accessToken);
+      const tokenTest = await inspectPageToken(accessToken, pageId);
       const connectionStatus = tokenTest.valid ? 'connected' : 'connection_error';
       const errorMessage = tokenTest.error || null;
       const now = new Date().toISOString();
