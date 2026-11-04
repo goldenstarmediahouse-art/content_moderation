@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { normalizePageAccessToken } from '@/lib/facebook/page-access-token';
 
 const GRAPH_API_VERSION = 'v26.0';
 const GRAPH_API_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
@@ -151,13 +152,17 @@ export async function subscribePageToWebhooks(
   pageAccessToken: string
 ): Promise<{ success: boolean; errorCode?: number | string; errorMessage?: string }> {
   try {
-    if (!pageId || !pageAccessToken.trim()) {
+    const tokenValidation = normalizePageAccessToken(pageAccessToken);
+    if (!pageId || !tokenValidation.valid) {
       return {
         success: false,
         errorCode: 'MISSING_PAGE_ID_OR_TOKEN',
-        errorMessage: 'A Facebook Page ID and Page Access Token are required.',
+        errorMessage: tokenValidation.valid
+          ? 'A Facebook Page ID is required.'
+          : tokenValidation.error,
       };
     }
+    pageAccessToken = tokenValidation.token;
 
     const url = `${GRAPH_API_BASE}/${encodeURIComponent(pageId)}/subscribed_apps`;
     const response = await fetch(url, {
@@ -224,41 +229,121 @@ export async function inspectPageToken(
   error?: string;
 }> {
   try {
-    if (!pageAccessToken.trim()) {
-      return { valid: false, error: 'The stored Page Access Token is empty.' };
+    const tokenValidation = normalizePageAccessToken(pageAccessToken);
+    if (!tokenValidation.valid) {
+      return { valid: false, error: tokenValidation.error };
     }
+    pageAccessToken = tokenValidation.token;
 
-    const headers = { Authorization: `Bearer ${pageAccessToken}` };
-    const identityResponse = await fetch(`${GRAPH_API_BASE}/me?fields=id`, { headers });
-    const identity = await identityResponse.json();
-
-    if (!identityResponse.ok || identity.error || typeof identity.id !== 'string') {
+    const appId = process.env.META_APP_ID;
+    const appSecret = process.env.META_APP_SECRET;
+    if (!appId || !appSecret) {
       return {
         valid: false,
-        error: redactAccessToken(
-          identity.error?.message || 'Meta could not identify the Page Access Token.',
-          pageAccessToken
+        error: 'Meta token validation is not configured on the server (META_APP_ID and META_APP_SECRET are required).',
+      };
+    }
+
+    const appAccessToken = `${appId}|${appSecret}`;
+    const debugResponse = await fetch(`${GRAPH_API_BASE}/debug_token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        input_token: pageAccessToken,
+        access_token: appAccessToken,
+      }),
+    });
+    const debugJson = await debugResponse.json();
+    const debug = debugJson.data;
+
+    if (!debugResponse.ok || debugJson.error || !debug) {
+      return {
+        valid: false,
+        error: sanitizeMetaError(
+          debugJson.error?.message || 'Meta could not inspect the Page Access Token.',
+          pageAccessToken,
+          appAccessToken,
+          appId,
+          appSecret
         ),
       };
     }
 
-    if (expectedPageId && identity.id !== expectedPageId) {
+    if (debug.is_valid !== true) {
       return {
         valid: false,
-        pageId: identity.id,
-        error: 'The stored token belongs to a different Facebook identity than the selected Page.',
+        error: debug.error?.message
+          ? sanitizeMetaError(debug.error.message, pageAccessToken, appAccessToken, appId, appSecret)
+          : 'Meta reports that the Page Access Token is invalid or expired.',
       };
     }
 
-    const permissionsResponse = await fetch(`${GRAPH_API_BASE}/me/permissions`, { headers });
+    if (debug.app_id !== appId) {
+      return {
+        valid: false,
+        error: 'The Page Access Token was issued for a different Meta app.',
+      };
+    }
+
+    if (debug.type !== 'PAGE') {
+      return {
+        valid: false,
+        error: 'The supplied token is not a Page Access Token.',
+      };
+    }
+
+    if (expectedPageId && debug.profile_id && debug.profile_id !== expectedPageId) {
+      return {
+        valid: false,
+        pageId: debug.profile_id,
+        error: 'The Page Access Token is associated with a different Facebook Page.',
+      };
+    }
+
+    let verifiedPageId = debug.profile_id as string | undefined;
+    if (expectedPageId && !verifiedPageId) {
+      const pageResponse = await fetch(
+        `${GRAPH_API_BASE}/${encodeURIComponent(expectedPageId)}?fields=id`,
+        {
+          headers: { Authorization: `Bearer ${pageAccessToken}` },
+        }
+      );
+      const pageJson = await pageResponse.json();
+      if (!pageResponse.ok || pageJson.error || pageJson.id !== expectedPageId) {
+        return {
+          valid: false,
+          error: sanitizeMetaError(
+            pageJson.error?.message || 'The token could not be verified for the selected Facebook Page.',
+            pageAccessToken,
+            appAccessToken,
+            appId,
+            appSecret
+          ),
+        };
+      }
+      verifiedPageId = pageJson.id;
+    }
+
+    const permissionsResponse = await fetch(`${GRAPH_API_BASE}/me/permissions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({ access_token: pageAccessToken }),
+    });
     const permissionsData = await permissionsResponse.json();
     if (!permissionsResponse.ok || permissionsData.error) {
       return {
         valid: false,
-        pageId: identity.id,
-        error: redactAccessToken(
+        pageId: verifiedPageId,
+        error: sanitizeMetaError(
           permissionsData.error?.message || 'Meta could not read permissions for this Page Access Token.',
-          pageAccessToken
+          pageAccessToken,
+          appAccessToken,
+          appId,
+          appSecret
         ),
       };
     }
@@ -266,19 +351,53 @@ export async function inspectPageToken(
     const permissions: string[] = (permissionsData.data || [])
       .filter((p: any) => p.status === 'granted')
       .map((p: any) => p.permission);
+    const debugScopes: string[] = Array.isArray(debug.scopes) ? debug.scopes : [];
+    const grantedPermissions = new Set([...permissions, ...debugScopes]);
+
+    const granularScopes = Array.isArray(debug.granular_scopes) ? debug.granular_scopes : [];
+    const isPermissionGrantedForPage = (permission: string) => {
+      if (!grantedPermissions.has(permission)) return false;
+      const scope = granularScopes.find((item: any) => item.scope === permission);
+      return !scope?.target_ids?.length || !expectedPageId || scope.target_ids.includes(expectedPageId);
+    };
+
+    const requiredPermissions = ['pages_manage_metadata', 'pages_read_engagement'];
+    const missingPermissions = requiredPermissions.filter(
+      (permission) => !isPermissionGrantedForPage(permission)
+    );
+    if (missingPermissions.length > 0) {
+      return {
+        valid: false,
+        permissions: Array.from(grantedPermissions),
+        pageId: verifiedPageId,
+        error: `The Page Access Token is missing required permission(s): ${missingPermissions.join(', ')}.`,
+      };
+    }
 
     return {
       valid: true,
-      permissions,
-      pageId: identity.id,
+      permissions: Array.from(grantedPermissions),
+      pageId: verifiedPageId,
     };
   } catch (err: any) {
     return {
       valid: false,
-      error: redactAccessToken(
+      error: sanitizeMetaError(
         `Failed to inspect Page Access Token: ${err.message}`,
-        pageAccessToken
+        pageAccessToken,
+        process.env.META_APP_ID || '',
+        process.env.META_APP_SECRET || '',
+        `${process.env.META_APP_ID || ''}|${process.env.META_APP_SECRET || ''}`
       ),
     };
   }
+}
+
+function sanitizeMetaError(message: string, ...credentials: string[]): string {
+  return credentials.reduce(
+    (safeMessage, credential) => credential
+      ? safeMessage.split(credential).join('[REDACTED]')
+      : safeMessage,
+    message
+  );
 }

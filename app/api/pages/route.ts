@@ -3,6 +3,7 @@ import { requireSuperAdmin } from '@/lib/auth/session';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { decryptToken, encryptToken } from '@/lib/crypto/token-encryption';
 import { inspectPageToken, subscribePageToWebhooks } from '@/lib/facebook/graph-api';
+import { normalizePageAccessToken } from '@/lib/facebook/page-access-token';
 import { Database } from '@/types/database';
 
 type PageWebhookResult = {
@@ -153,18 +154,24 @@ export async function POST(request: NextRequest) {
 
     if (action === 'connect') {
       const { pageId, name, accessToken, category } = body;
-      if (!pageId || !name || !accessToken) {
+      if (!pageId || !name) {
         return NextResponse.json({ error: 'pageId, name, and accessToken are required.' }, { status: 400 });
       }
 
+      const tokenValidation = normalizePageAccessToken(accessToken);
+      if (!tokenValidation.valid) {
+        return NextResponse.json({ error: tokenValidation.error }, { status: 400 });
+      }
+      const pageAccessToken = tokenValidation.token;
+
       // Test token validity with Meta
-      const tokenTest = await inspectPageToken(accessToken, pageId);
+      const tokenTest = await inspectPageToken(pageAccessToken, pageId);
       const connectionStatus = tokenTest.valid ? 'connected' : 'connection_error';
       const errorMessage = tokenTest.error || null;
       const now = new Date().toISOString();
 
       // Encrypt the token with AES-256-GCM before saving
-      const encryptedToken = encryptToken(accessToken);
+      const encryptedToken = encryptToken(pageAccessToken);
 
       // Upsert page record
       const { data: pageRecord, error: pageErr } = await supabase
@@ -213,7 +220,7 @@ export async function POST(request: NextRequest) {
         errorMessage: tokenTest.error || 'The Page Access Token is invalid or expired.',
       };
       if (tokenTest.valid) {
-        webhookResult = await subscribeAndSaveStatus(supabase, pageRecord.id, pageId, accessToken, tokenTest);
+        webhookResult = await subscribeAndSaveStatus(supabase, pageRecord.id, pageId, pageAccessToken, tokenTest);
       }
 
       // Audit log

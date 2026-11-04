@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Database } from '@/types/database';
 import { CurrentAdmin } from '@/lib/auth/session';
+import { normalizePageAccessToken } from '@/lib/facebook/page-access-token';
 
 interface PagesViewProps {
   initialPages: Database['public']['Tables']['facebook_pages']['Row'][];
@@ -51,6 +52,12 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
 
   async function handleConnect(e: React.FormEvent) {
     e.preventDefault();
+    const tokenValidation = normalizePageAccessToken(accessToken);
+    if (!tokenValidation.valid) {
+      setErrorMsg(tokenValidation.error);
+      return;
+    }
+
     setSubmitting(true);
     setErrorMsg(null);
     setPageActionError(null);
@@ -64,7 +71,7 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
           action: 'connect',
           pageId,
           name,
-          accessToken,
+          accessToken: tokenValidation.token,
         }),
       });
 
@@ -462,13 +469,16 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
               </div>
 
               <div className="space-y-1">
-                <label className="text-charcoal-300 font-medium">Page Access Token</label>
+                <label htmlFor="page-access-token" className="text-charcoal-300 font-medium">Page Access Token</label>
                 <textarea
+                  id="page-access-token"
                   required
                   rows={3}
                   value={accessToken}
                   onChange={(e) => setAccessToken(e.target.value)}
                   placeholder="EAA..."
+                  autoComplete="off"
+                  spellCheck={false}
                   className="w-full px-3 py-2 bg-charcoal-950 border border-charcoal-800 rounded text-charcoal-100 focus:outline-none focus:border-charcoal-600 font-mono text-[11px]"
                 />
                 <span className="text-[10px] text-charcoal-500">
