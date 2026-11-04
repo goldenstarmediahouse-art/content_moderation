@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireSuperAdmin } from '@/lib/auth/session';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { getScopedAdminSupabaseClient } from '@/lib/supabase/client-resolver';
 import { decryptToken, encryptToken } from '@/lib/crypto/token-encryption';
 import { inspectPageToken, subscribePageToWebhooks } from '@/lib/facebook/graph-api';
+import { syncFacebookPageComments } from '@/lib/facebook/sync-service';
 import { normalizePageAccessToken } from '@/lib/facebook/page-access-token';
 import { Database } from '@/types/database';
 

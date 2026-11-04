@@ -143,6 +143,225 @@ export async function unhideFacebookComment(
   }
 }
 
+export interface FacebookPostItem {
+  id: string;
+  message?: string;
+  created_time?: string;
+  permalink_url?: string;
+}
+
+export interface FacebookCommentItem {
+  id: string;
+  message: string;
+  created_time: string;
+  from?: {
+    id?: string;
+    name?: string;
+  };
+}
+
+export interface FetchCommentsResult {
+  success: boolean;
+  comments: FacebookCommentItem[];
+  httpStatus?: number;
+  error?: string;
+  errorCode?: number | string;
+}
+
+export interface FetchPostsResult {
+  success: boolean;
+  posts: FacebookPostItem[];
+  httpStatus?: number;
+  error?: string;
+  errorCode?: number | string;
+}
+
+/**
+ * Fetches comments for a specific Facebook Post via Graph API.
+ * Endpoint: GET /{POST_ID}/comments?fields=id,message,created_time,from
+ * Emits safe diagnostic logs showing endpoint, HTTP status, and comment count without exposing credentials.
+ */
+export async function fetchPostComments(
+  postId: string,
+  pageAccessToken: string,
+  limit = 100
+): Promise<FetchCommentsResult> {
+  const tokenValidation = normalizePageAccessToken(pageAccessToken);
+  if (!postId || !tokenValidation.valid) {
+    return {
+      success: false,
+      comments: [],
+      error: tokenValidation.valid ? 'A post ID is required.' : tokenValidation.error,
+    };
+  }
+  pageAccessToken = tokenValidation.token;
+
+  const endpointPath = `/${encodeURIComponent(postId)}/comments?fields=id,message,created_time,from&limit=${limit}`;
+  const url = `${GRAPH_API_BASE}${endpointPath}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${pageAccessToken}`,
+      },
+    });
+
+    const json = await response.json();
+
+    if (!response.ok || json.error) {
+      const err = json.error as FacebookGraphError;
+      const errorCode = err?.code ?? response.status;
+      const safeError = sanitizeMetaError(
+        err?.message || 'Failed to fetch comments for post.',
+        pageAccessToken,
+        process.env.META_APP_ID,
+        process.env.META_APP_SECRET
+      );
+
+      console.error(
+        `[Facebook Graph API Error] Post ID: ${postId} | Endpoint: /${postId}/comments | HTTP Status: ${response.status} | Code: ${errorCode} | Error: ${safeError}`
+      );
+
+      return {
+        success: false,
+        comments: [],
+        httpStatus: response.status,
+        errorCode,
+        error: safeError,
+      };
+    }
+
+    const rawComments = Array.isArray(json.data) ? json.data : [];
+    const comments: FacebookCommentItem[] = rawComments.map((item: any) => ({
+      id: String(item.id),
+      message: String(item.message || ''),
+      created_time: item.created_time || new Date().toISOString(),
+      from: item.from ? { id: item.from.id, name: item.from.name } : undefined,
+    }));
+
+    console.log(
+      `[Facebook Graph API] Fetching comments | Post ID: ${postId} | Endpoint: /${postId}/comments?fields=id,message,created_time,from | HTTP Status: ${response.status} | Comments: ${comments.length}`
+    );
+
+    return {
+      success: true,
+      comments,
+      httpStatus: response.status,
+    };
+  } catch (err: any) {
+    const safeError = sanitizeMetaError(
+      `Network failure while fetching comments: ${err.message}`,
+      pageAccessToken,
+      process.env.META_APP_ID,
+      process.env.META_APP_SECRET
+    );
+
+    console.error(
+      `[Facebook Graph API Error] Post ID: ${postId} | Endpoint: /${postId}/comments | Network Error: ${safeError}`
+    );
+
+    return {
+      success: false,
+      comments: [],
+      error: safeError,
+    };
+  }
+}
+
+/**
+ * Fetches recent posts for a Facebook Page via Graph API.
+ * Endpoint: GET /{PAGE_ID}/posts?fields=id,message,created_time,permalink_url
+ * Emits safe diagnostic logs without exposing credentials.
+ */
+export async function fetchPagePosts(
+  pageId: string,
+  pageAccessToken: string,
+  limit = 25
+): Promise<FetchPostsResult> {
+  const tokenValidation = normalizePageAccessToken(pageAccessToken);
+  if (!pageId || !tokenValidation.valid) {
+    return {
+      success: false,
+      posts: [],
+      error: tokenValidation.valid ? 'A Page ID is required.' : tokenValidation.error,
+    };
+  }
+  pageAccessToken = tokenValidation.token;
+
+  const endpointPath = `/${encodeURIComponent(pageId)}/posts?fields=id,message,created_time,permalink_url&limit=${limit}`;
+  const url = `${GRAPH_API_BASE}${endpointPath}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${pageAccessToken}`,
+      },
+    });
+
+    const json = await response.json();
+
+    if (!response.ok || json.error) {
+      const err = json.error as FacebookGraphError;
+      const errorCode = err?.code ?? response.status;
+      const safeError = sanitizeMetaError(
+        err?.message || 'Failed to fetch posts for Page.',
+        pageAccessToken,
+        process.env.META_APP_ID,
+        process.env.META_APP_SECRET
+      );
+
+      console.error(
+        `[Facebook Graph API Error] Page ID: ${pageId} | Endpoint: /${pageId}/posts | HTTP Status: ${response.status} | Code: ${errorCode} | Error: ${safeError}`
+      );
+
+      return {
+        success: false,
+        posts: [],
+        httpStatus: response.status,
+        errorCode,
+        error: safeError,
+      };
+    }
+
+    const rawPosts = Array.isArray(json.data) ? json.data : [];
+    const posts: FacebookPostItem[] = rawPosts.map((item: any) => ({
+      id: String(item.id),
+      message: item.message,
+      created_time: item.created_time,
+      permalink_url: item.permalink_url,
+    }));
+
+    console.log(
+      `[Facebook Graph API] Fetching posts | Page ID: ${pageId} | Endpoint: /${pageId}/posts | HTTP Status: ${response.status} | Posts: ${posts.length}`
+    );
+
+    return {
+      success: true,
+      posts,
+      httpStatus: response.status,
+    };
+  } catch (err: any) {
+    const safeError = sanitizeMetaError(
+      `Network failure while fetching posts: ${err.message}`,
+      pageAccessToken,
+      process.env.META_APP_ID,
+      process.env.META_APP_SECRET
+    );
+
+    console.error(
+      `[Facebook Graph API Error] Page ID: ${pageId} | Endpoint: /${pageId}/posts | Network Error: ${safeError}`
+    );
+
+    return {
+      success: false,
+      posts: [],
+      error: safeError,
+    };
+  }
+}
+
 /**
  * Subscribes a Facebook Page to feed webhooks for real-time comment ingestion.
  * Endpoint: POST /{page-id}/subscribed_apps?subscribed_fields=feed
