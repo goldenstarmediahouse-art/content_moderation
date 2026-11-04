@@ -329,9 +329,33 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
               )}
 
               {tokenDiagnostic && tokenDiagnosticPageId === page.id && (
-                <pre className="overflow-x-auto rounded border border-charcoal-800 bg-charcoal-950 p-3 text-xs text-charcoal-300">
-                  {JSON.stringify(tokenDiagnostic, null, 2)}
-                </pre>
+                <div className={`p-3 rounded border text-xs flex items-center justify-between ${
+                  tokenDiagnostic.decryptionSuccessful
+                    ? 'bg-emerald-950/30 border-emerald-800/50 text-emerald-300'
+                    : 'bg-red-950/30 border-red-800/50 text-red-300'
+                }`}>
+                  <div className="flex items-center space-x-2">
+                    {tokenDiagnostic.decryptionSuccessful ? (
+                      <CheckCircle className="w-4 h-4 flex-shrink-0 text-emerald-400" />
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 flex-shrink-0 text-red-400" />
+                    )}
+                    <span>
+                      {tokenDiagnostic.decryptionSuccessful
+                        ? `Stored token verified: AES-256-GCM encrypted (${tokenDiagnostic.ciphertextMetadata.byteLength} bytes), decrypted successfully.`
+                        : 'Stored token verification failed: Ciphertext corrupted or encryption key mismatch.'}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setTokenDiagnostic(null);
+                      setTokenDiagnosticPageId(null);
+                    }}
+                    className="text-xs text-charcoal-400 hover:text-charcoal-200 ml-3"
+                  >
+                    Dismiss
+                  </button>
+                </div>
               )}
 
               {/* Toggles & Settings Bar */}
@@ -389,16 +413,14 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
 
                 {isSuperAdmin && (
                   <div className="flex items-center space-x-4">
-                    {page.name === 'Golden Star Tv' && (
-                      <button
-                        onClick={() => handleDiagnosePageToken(page.id)}
-                        disabled={diagnosingPageId === page.id}
-                        className="flex items-center space-x-1 text-xs text-charcoal-300 hover:text-white transition-colors disabled:opacity-50"
-                      >
-                        <ShieldAlert className="w-3.5 h-3.5" />
-                        <span>{diagnosingPageId === page.id ? 'Diagnosing...' : 'Run temporary token diagnostic'}</span>
-                      </button>
-                    )}
+                    <button
+                      onClick={() => handleDiagnosePageToken(page.id)}
+                      disabled={diagnosingPageId === page.id}
+                      className="flex items-center space-x-1 text-xs text-charcoal-300 hover:text-white transition-colors disabled:opacity-50"
+                    >
+                      <ShieldAlert className="w-3.5 h-3.5" />
+                      <span>{diagnosingPageId === page.id ? 'Checking...' : 'Verify Token'}</span>
+                    </button>
                     {!page.webhook_subscribed && (
                       <button
                         onClick={() => handleRetryWebhookSubscription(page.id, page.name)}
@@ -406,7 +428,7 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
                         className="flex items-center space-x-1 text-xs text-charcoal-300 hover:text-white transition-colors disabled:opacity-50"
                       >
                         <RefreshCw className={`w-3.5 h-3.5 ${retryingPageId === page.id ? 'animate-spin' : ''}`} />
-                        <span>{retryingPageId === page.id ? 'Retrying...' : 'Retry webhook subscription'}</span>
+                        <span>{retryingPageId === page.id ? 'Retrying...' : 'Retry Webhook'}</span>
                       </button>
                     )}
                     <button
@@ -433,7 +455,7 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
                 Connect Facebook Page
               </h3>
               <p className="text-xs text-charcoal-400 mt-0.5">
-                Enter your Facebook Page ID and Page Access Token. The token will be encrypted server-side with AES-256-GCM before storage.
+                Paste your Facebook Page Access Token below. The token is encrypted with AES-256-GCM before database storage.
               </p>
             </div>
 
@@ -445,30 +467,6 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
 
             <form onSubmit={handleConnect} className="space-y-4 text-xs">
               <div className="space-y-1">
-                <label className="text-charcoal-300 font-medium">Page Name</label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Grace Fellowship Church Harare"
-                  className="w-full px-3 py-2 bg-charcoal-950 border border-charcoal-800 rounded text-charcoal-100 focus:outline-none focus:border-charcoal-600"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-charcoal-300 font-medium">Facebook Page ID</label>
-                <input
-                  type="text"
-                  required
-                  value={pageId}
-                  onChange={(e) => setPageId(e.target.value)}
-                  placeholder="e.g. 102938475610293"
-                  className="w-full px-3 py-2 bg-charcoal-950 border border-charcoal-800 rounded text-charcoal-100 focus:outline-none focus:border-charcoal-600 font-mono"
-                />
-              </div>
-
-              <div className="space-y-1">
                 <label htmlFor="page-access-token" className="text-charcoal-300 font-medium">Page Access Token</label>
                 <textarea
                   id="page-access-token"
@@ -476,15 +474,40 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
                   rows={3}
                   value={accessToken}
                   onChange={(e) => setAccessToken(e.target.value)}
-                  placeholder="EAA..."
+                  placeholder="Paste raw Page Access Token (starts with EAA...)"
                   autoComplete="off"
                   spellCheck={false}
                   className="w-full px-3 py-2 bg-charcoal-950 border border-charcoal-800 rounded text-charcoal-100 focus:outline-none focus:border-charcoal-600 font-mono text-[11px]"
                 />
                 <span className="text-[10px] text-charcoal-500">
-                  Webhook subscription requires <code className="text-charcoal-400">pages_manage_metadata</code>.
-                  Comment ingestion also requires <code className="text-charcoal-400">pages_read_engagement</code>.
+                  Required permissions: <code className="text-charcoal-400">pages_manage_metadata</code> (webhooks), <code className="text-charcoal-400">pages_read_engagement</code> (comment reading).
                 </span>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-charcoal-300 font-medium">
+                  Page Name <span className="text-charcoal-500 font-normal">(Optional — auto-detected if blank)</span>
+                </label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Golden Star Tv"
+                  className="w-full px-3 py-2 bg-charcoal-950 border border-charcoal-800 rounded text-charcoal-100 focus:outline-none focus:border-charcoal-600"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-charcoal-300 font-medium">
+                  Facebook Page ID <span className="text-charcoal-500 font-normal">(Optional — auto-detected if blank)</span>
+                </label>
+                <input
+                  type="text"
+                  value={pageId}
+                  onChange={(e) => setPageId(e.target.value)}
+                  placeholder="e.g. 102938475610293"
+                  className="w-full px-3 py-2 bg-charcoal-950 border border-charcoal-800 rounded text-charcoal-100 focus:outline-none focus:border-charcoal-600 font-mono"
+                />
               </div>
 
               <div className="pt-2 flex items-center justify-end space-x-2 border-t border-charcoal-800">
@@ -500,7 +523,7 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
                   disabled={submitting}
                   className="px-4 py-1.5 rounded bg-charcoal-800 hover:bg-charcoal-700 text-charcoal-100 border border-charcoal-700 font-medium disabled:opacity-50"
                 >
-                  {submitting ? 'Connecting & Verifying...' : 'Save & Encrypt'}
+                  {submitting ? 'Verifying & Encrypting...' : 'Connect Facebook Page'}
                 </button>
               </div>
             </form>

@@ -118,12 +118,15 @@ export async function POST(request: NextRequest) {
         },
       };
 
+      if (!body.pageDbId) {
+        return NextResponse.json({ error: 'pageDbId is required for diagnosis.' }, { status: 400 });
+      }
+
       const { data: pages, error: pageError } = await supabase
         .from('facebook_pages')
         .select('id')
-        .eq('id', body.pageDbId || '')
-        .or('name.eq.Golden Star Tv,page_name.eq.Golden Star Tv')
-        .limit(2);
+        .eq('id', body.pageDbId)
+        .limit(1);
 
       if (!pageError && pages?.length === 1) {
         result.pageFound = true;
@@ -154,8 +157,8 @@ export async function POST(request: NextRequest) {
 
     if (action === 'connect') {
       const { pageId, name, accessToken, category } = body;
-      if (!pageId || !name) {
-        return NextResponse.json({ error: 'pageId, name, and accessToken are required.' }, { status: 400 });
+      if (!accessToken) {
+        return NextResponse.json({ error: 'A Facebook Page Access Token is required.' }, { status: 400 });
       }
 
       const tokenValidation = normalizePageAccessToken(accessToken);
@@ -164,8 +167,29 @@ export async function POST(request: NextRequest) {
       }
       const pageAccessToken = tokenValidation.token;
 
-      // Test token validity with Meta
-      const tokenTest = await inspectPageToken(pageAccessToken, pageId);
+      let targetPageId = typeof pageId === 'string' ? pageId.trim() : '';
+      let targetName = typeof name === 'string' ? name.trim() : '';
+
+      // Test token validity with Meta and auto-detect Page ID and Name if omitted
+      const tokenTest = await inspectPageToken(pageAccessToken, targetPageId || undefined);
+
+      if (!targetPageId && tokenTest.pageId) {
+        targetPageId = tokenTest.pageId;
+      }
+      if (!targetName && tokenTest.pageName) {
+        targetName = tokenTest.pageName;
+      }
+
+      if (!targetPageId) {
+        return NextResponse.json(
+          { error: tokenTest.error || 'A valid Facebook Page ID could not be identified.' },
+          { status: 400 }
+        );
+      }
+      if (!targetName) {
+        targetName = `Facebook Page (${targetPageId})`;
+      }
+
       const connectionStatus = tokenTest.valid ? 'connected' : 'connection_error';
       const errorMessage = tokenTest.error || null;
       const now = new Date().toISOString();
@@ -177,10 +201,10 @@ export async function POST(request: NextRequest) {
       const { data: pageRecord, error: pageErr } = await supabase
         .from('facebook_pages')
         .upsert({
-          page_name: name,
-          facebook_page_id: pageId,
-          page_id: pageId,
-          name,
+          page_name: targetName,
+          facebook_page_id: targetPageId,
+          page_id: targetPageId,
+          name: targetName,
           category: category || 'Church / Religious Organization',
           is_active: true,
           monitoring_enabled: true,
@@ -220,7 +244,7 @@ export async function POST(request: NextRequest) {
         errorMessage: tokenTest.error || 'The Page Access Token is invalid or expired.',
       };
       if (tokenTest.valid) {
-        webhookResult = await subscribeAndSaveStatus(supabase, pageRecord.id, pageId, pageAccessToken, tokenTest);
+        webhookResult = await subscribeAndSaveStatus(supabase, pageRecord.id, targetPageId, pageAccessToken, tokenTest);
       }
 
       // Audit log
@@ -230,8 +254,8 @@ export async function POST(request: NextRequest) {
         entity_type: 'facebook_pages',
         entity_id: pageRecord.id,
         details: {
-          pageId,
-          name,
+          pageId: targetPageId,
+          name: targetName,
           webhookSubscribed: webhookResult.confirmed && !webhookResult.persistenceError,
           metaConfirmedSubscription: webhookResult.confirmed,
           webhookErrorCode: webhookResult.errorCode || null,

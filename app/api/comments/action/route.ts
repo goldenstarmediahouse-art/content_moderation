@@ -71,6 +71,17 @@ export async function POST(request: NextRequest) {
     let apiResponse: any = null;
     let outcome: 'success' | 'failed' = 'success';
 
+    // Fetch encrypted token if action requires external Meta Graph API call
+    let tokenRow: { encrypted_access_token: unknown } | null = null;
+    if (action === 'hidden' || action === 'restored') {
+      const { data } = await supabase
+        .from('page_tokens')
+        .select('encrypted_access_token')
+        .eq('page_id', comment.page_id)
+        .maybeSingle();
+      tokenRow = data;
+    }
+
     // 3. Map action to status & external sync states
     switch (action) {
       case 'approved':
@@ -94,16 +105,9 @@ export async function POST(request: NextRequest) {
         break;
 
       case 'hidden':
-        // Check if Meta connection is active
-        const { data: tokenRow } = await supabase
-          .from('page_tokens')
-          .select('encrypted_access_token')
-          .eq('page_id', comment.page_id)
-          .maybeSingle();
-
         if (tokenRow?.encrypted_access_token) {
           try {
-            const decrypted = decryptToken(tokenRow.encrypted_access_token);
+            const decrypted = decryptToken(tokenRow.encrypted_access_token as any);
             const fbRes = await hideFacebookComment(comment.facebook_comment_id, decrypted);
             apiResponse = fbRes;
             if (fbRes.success) {
@@ -113,7 +117,7 @@ export async function POST(request: NextRequest) {
               externalActionStatus = 'failed_facebook';
               outcome = 'failed';
             }
-          } catch (decErr: any) {
+          } catch {
             externalActionStatus = 'failed_facebook';
             outcome = 'failed';
           }
@@ -141,7 +145,25 @@ export async function POST(request: NextRequest) {
       case 'restored':
         newStatus = 'restored';
         isHidden = false;
-        externalActionStatus = 'pending_facebook_sync';
+        if (tokenRow?.encrypted_access_token) {
+          try {
+            const decrypted = decryptToken(tokenRow.encrypted_access_token as any);
+            const fbRes = await unhideFacebookComment(comment.facebook_comment_id, decrypted);
+            apiResponse = fbRes;
+            if (fbRes.success) {
+              externalActionStatus = 'synced_facebook';
+            } else {
+              externalActionStatus = 'failed_facebook';
+              outcome = 'failed';
+            }
+          } catch {
+            externalActionStatus = 'failed_facebook';
+            outcome = 'failed';
+          }
+        } else {
+          externalActionStatus = 'pending_facebook_sync';
+          apiResponse = { note: 'Internal moderation decision recorded: marked restored locally. Facebook API sync pending connection.' };
+        }
         break;
 
       case 'overridden':

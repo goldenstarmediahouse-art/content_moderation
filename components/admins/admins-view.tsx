@@ -18,11 +18,12 @@ export function AdminsView({ initialAdmins, currentAdmin }: AdminsViewProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
+  const [role, setRole] = useState<'super_admin' | 'moderator'>('moderator');
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  async function handleCreateModerator(e: React.FormEvent) {
+  async function handleCreateAdmin(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
     setErrorMsg(null);
@@ -33,23 +34,27 @@ export function AdminsView({ initialAdmins, currentAdmin }: AdminsViewProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'create_moderator',
+          action: 'create_admin',
           email,
           password,
           full_name: fullName,
+          role,
         }),
       });
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to create moderator account');
+        throw new Error(data.error || 'Failed to create administrator account');
       }
 
-      setSuccessMsg(`Moderator account created for ${email}.`);
+      setSuccessMsg(
+        `${role === 'super_admin' ? 'Super Admin' : 'Moderator'} account created successfully for ${email}.`
+      );
       setShowCreateModal(false);
       setEmail('');
       setPassword('');
       setFullName('');
+      setRole('moderator');
       router.refresh();
     } catch (err: any) {
       setErrorMsg(err.message);
@@ -58,9 +63,14 @@ export function AdminsView({ initialAdmins, currentAdmin }: AdminsViewProps) {
     }
   }
 
-  async function handleToggleStatus(targetAdminId: string, currentStatus: boolean) {
+  async function handleToggleStatus(targetAdminId: string, currentStatus: boolean, adminName: string) {
     if (targetAdminId === currentAdmin.id) {
-      alert('You cannot deactivate your own Super Admin account.');
+      alert('You cannot deactivate your own active session.');
+      return;
+    }
+
+    const actionText = currentStatus ? 'deactivate' : 'reactivate';
+    if (!window.confirm(`Are you sure you want to ${actionText} ${adminName}?`)) {
       return;
     }
 
@@ -83,7 +93,7 @@ export function AdminsView({ initialAdmins, currentAdmin }: AdminsViewProps) {
       );
       router.refresh();
     } catch (err: any) {
-      alert(`Error toggling account status: ${err.message}`);
+      alert(`Error updating account status: ${err.message}`);
     }
   }
 
@@ -96,7 +106,7 @@ export function AdminsView({ initialAdmins, currentAdmin }: AdminsViewProps) {
             Church Administrator Directory ({admins.length})
           </h2>
           <p className="text-xs text-charcoal-400 mt-0.5">
-            Strict two-administrator role architecture (One Super Admin, One Moderator).
+            Role-based access control directory for church Super Admins and Moderators.
           </p>
         </div>
 
@@ -105,7 +115,7 @@ export function AdminsView({ initialAdmins, currentAdmin }: AdminsViewProps) {
           className="flex items-center space-x-1.5 px-3 py-1.5 rounded bg-charcoal-800 hover:bg-charcoal-700 text-charcoal-100 border border-charcoal-700 text-xs font-medium transition-colors"
         >
           <UserPlus className="w-4 h-4" />
-          <span>Provision Moderator Account</span>
+          <span>Provision Administrator Account</span>
         </button>
       </div>
 
@@ -179,9 +189,9 @@ export function AdminsView({ initialAdmins, currentAdmin }: AdminsViewProps) {
                   </td>
 
                   <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                    {!isSelf && adminUser.role === 'moderator' ? (
+                    {!isSelf ? (
                       <button
-                        onClick={() => handleToggleStatus(adminUser.id, adminUser.is_active)}
+                        onClick={() => handleToggleStatus(adminUser.id, adminUser.is_active, adminUser.full_name || adminUser.email)}
                         className={`px-2.5 py-1 rounded text-xs font-medium border transition-colors ${
                           adminUser.is_active
                             ? 'bg-red-950/50 hover:bg-red-900 text-red-300 border-red-800/60'
@@ -201,13 +211,13 @@ export function AdminsView({ initialAdmins, currentAdmin }: AdminsViewProps) {
         </table>
       </div>
 
-      {/* Provision Moderator Modal */}
+      {/* Provision Administrator Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs">
           <div className="bg-charcoal-900 border border-charcoal-800 rounded-lg max-w-md w-full p-6 shadow-2xl space-y-4">
             <div className="border-b border-charcoal-800 pb-3">
               <h3 className="text-sm font-semibold text-charcoal-100">
-                Provision Moderator Account
+                Provision Administrator Account
               </h3>
               <p className="text-xs text-charcoal-400 mt-0.5">
                 Creates a verified login credential in Supabase Auth and registers the account in the administrator directory.
@@ -220,7 +230,48 @@ export function AdminsView({ initialAdmins, currentAdmin }: AdminsViewProps) {
               </div>
             )}
 
-            <form onSubmit={handleCreateModerator} className="space-y-4 text-xs">
+            <form onSubmit={handleCreateAdmin} className="space-y-4 text-xs">
+              <div className="space-y-1">
+                <label className="text-charcoal-300 font-medium">Role Assignment</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRole('super_admin')}
+                    className={`p-2.5 rounded border text-left transition-all ${
+                      role === 'super_admin'
+                        ? 'bg-purple-950/50 border-purple-600 text-purple-200 ring-1 ring-purple-600/50'
+                        : 'bg-charcoal-950 border-charcoal-800 text-charcoal-400 hover:border-charcoal-700'
+                    }`}
+                  >
+                    <div className="font-semibold text-xs flex items-center space-x-1">
+                      <Shield className="w-3.5 h-3.5 text-purple-400" />
+                      <span>Super Admin</span>
+                    </div>
+                    <p className="text-[10px] text-charcoal-400 mt-1 leading-snug">
+                      Full oversight, page connections, rules, and admin provisioning.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setRole('moderator')}
+                    className={`p-2.5 rounded border text-left transition-all ${
+                      role === 'moderator'
+                        ? 'bg-blue-950/50 border-blue-600 text-blue-200 ring-1 ring-blue-600/50'
+                        : 'bg-charcoal-950 border-charcoal-800 text-charcoal-400 hover:border-charcoal-700'
+                    }`}
+                  >
+                    <div className="font-semibold text-xs flex items-center space-x-1">
+                      <Users className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Moderator</span>
+                    </div>
+                    <p className="text-[10px] text-charcoal-400 mt-1 leading-snug">
+                      Queue review, approval, flagging, notes, and escalations.
+                    </p>
+                  </button>
+                </div>
+              </div>
+
               <div className="space-y-1">
                 <label className="text-charcoal-300 font-medium">Full Name</label>
                 <input
@@ -228,7 +279,7 @@ export function AdminsView({ initialAdmins, currentAdmin }: AdminsViewProps) {
                   required
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  placeholder="e.g. Tendai Moyo"
+                  placeholder="e.g. Pastor Tendai Moyo"
                   className="w-full px-3 py-2 bg-charcoal-950 border border-charcoal-800 rounded text-charcoal-100 focus:outline-none focus:border-charcoal-600"
                 />
               </div>
@@ -240,7 +291,7 @@ export function AdminsView({ initialAdmins, currentAdmin }: AdminsViewProps) {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="moderator@church.org"
+                  placeholder="admin@church.org"
                   className="w-full px-3 py-2 bg-charcoal-950 border border-charcoal-800 rounded text-charcoal-100 focus:outline-none focus:border-charcoal-600"
                 />
               </div>
@@ -258,8 +309,11 @@ export function AdminsView({ initialAdmins, currentAdmin }: AdminsViewProps) {
                 />
               </div>
 
-              <div className="p-3 rounded bg-charcoal-950 border border-charcoal-800 text-[11px] text-charcoal-400">
-                Assigned Role: <span className="font-semibold text-charcoal-200">Moderator</span>. Moderators can review, approve, and flag comments but cannot modify system-wide settings or integration credentials.
+              <div className="p-2.5 rounded bg-charcoal-950 border border-charcoal-800 text-[11px] text-charcoal-400">
+                Selected Role: <span className="font-semibold text-charcoal-200">{role === 'super_admin' ? 'Super Administrator' : 'Moderator'}</span>.
+                {role === 'super_admin'
+                  ? ' This account will receive full system administrative rights.'
+                  : ' This account will be able to review queues and moderate comments.'}
               </div>
 
               <div className="pt-2 flex items-center justify-end space-x-2 border-t border-charcoal-800">

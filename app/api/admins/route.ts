@@ -9,31 +9,34 @@ export async function POST(request: NextRequest) {
     const { action } = body;
     const supabase = createAdminClient();
 
-    if (action === 'create_moderator') {
-      const { email, password, full_name } = body;
+    if (action === 'create_admin' || action === 'create_moderator') {
+      const { email, password, full_name, role } = body;
       if (!email || !password) {
         return NextResponse.json({ error: 'Email and temporary password are required' }, { status: 400 });
       }
+
+      const assignedRole: 'super_admin' | 'moderator' =
+        role === 'super_admin' ? 'super_admin' : 'moderator';
 
       // Create Supabase Auth user
       const { data: authUser, error: authErr } = await supabase.auth.admin.createUser({
         email,
         password,
         email_confirm: true,
-        user_metadata: { full_name, role: 'moderator' },
+        user_metadata: { full_name, role: assignedRole },
       });
 
       if (authErr || !authUser.user) {
         return NextResponse.json({ error: authErr?.message || 'Failed to create auth user' }, { status: 500 });
       }
 
-      // Insert into admin_users table as moderator
+      // Insert into admin_users table
       const { data: adminRecord, error: adminErr } = await supabase
         .from('admin_users')
         .insert({
           id: authUser.user.id,
           email,
-          role: 'moderator', // Strictly moderator, no second super_admin
+          role: assignedRole,
           full_name: full_name || null,
           is_active: true,
         })
@@ -48,10 +51,10 @@ export async function POST(request: NextRequest) {
 
       await supabase.from('audit_logs').insert({
         admin_id: admin.id,
-        action: 'CREATE_MODERATOR_ACCOUNT',
+        action: assignedRole === 'super_admin' ? 'CREATE_SUPER_ADMIN_ACCOUNT' : 'CREATE_MODERATOR_ACCOUNT',
         entity_type: 'admin_users',
         entity_id: adminRecord.id,
-        details: { email, full_name },
+        details: { email, full_name, role: assignedRole },
       });
 
       return NextResponse.json({ success: true, user: adminRecord });
