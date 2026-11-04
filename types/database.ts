@@ -169,7 +169,7 @@ export type Database = {
         Row: {
           id: string;
           page_id: string;
-          encrypted_access_token: any;
+          encrypted_access_token: string;
           token_type: string;
           token_expires_at: string | null;
           last_refreshed_at: string | null;
@@ -179,7 +179,7 @@ export type Database = {
         Insert: {
           id?: string;
           page_id: string;
-          encrypted_access_token: any;
+          encrypted_access_token: string;
           token_type?: string;
           token_expires_at?: string | null;
           last_refreshed_at?: string | null;
@@ -189,7 +189,7 @@ export type Database = {
         Update: {
           id?: string;
           page_id?: string;
-          encrypted_access_token?: any;
+          encrypted_access_token?: string;
           token_type?: string;
           token_expires_at?: string | null;
           last_refreshed_at?: string | null;

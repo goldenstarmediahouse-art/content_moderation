@@ -198,7 +198,7 @@ export async function POST(request: NextRequest) {
         .from('page_tokens')
         .upsert({
           page_id: pageRecord.id,
-          encrypted_access_token: encryptedToken,
+          encrypted_access_token: `\\x${encryptedToken.toString('hex')}`,
           token_type: 'page_access_token',
         }, { onConflict: 'page_id' });
 
@@ -281,7 +281,14 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'No encrypted Page Access Token is stored for this Page.' }, { status: 409 });
       }
 
-      const pageAccessToken = decryptToken(tokenRecord.encrypted_access_token);
+      let pageAccessToken: string;
+      try {
+        pageAccessToken = decryptToken(tokenRecord.encrypted_access_token);
+      } catch {
+        return NextResponse.json({
+          error: 'The stored Page token could not be decrypted. Its stored format or encryption key may not match.',
+        }, { status: 409 });
+      }
       const webhookResult = await subscribeAndSaveStatus(
         supabase,
         page.id,

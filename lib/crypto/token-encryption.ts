@@ -7,17 +7,18 @@ const AUTH_TAG_LENGTH = 16; // Standard 128-bit authentication tag
 function getEncryptionKey(): Buffer {
   const hexKey = process.env.ENCRYPTION_KEY;
   if (!hexKey) {
-    throw new Error('ENCRYPTION_KEY environment variable is missing.');
+    throw new Error('Token encryption key is not configured.');
   }
 
-  // Key must be exactly 32 bytes (256 bits). If hex string, length is 64.
   if (hexKey.length === 64) {
+    if (!/^[0-9a-fA-F]{64}$/.test(hexKey)) {
+      throw new Error('Token encryption key has an invalid format.');
+    }
     return Buffer.from(hexKey, 'hex');
   }
 
   const keyBuffer = Buffer.from(hexKey, 'utf-8');
   if (keyBuffer.length !== 32) {
-    // If not 32 bytes, hash with SHA-256 to derive a deterministic 32-byte key
     return crypto.createHash('sha256').update(hexKey).digest();
   }
 
@@ -54,18 +55,21 @@ export function encryptToken(plainText: string): Buffer {
  */
 export function decryptToken(encryptedData: Buffer | string): string {
   if (!encryptedData) {
-    throw new Error('Cannot decrypt empty or null token buffer.');
+    throw new Error('Stored token data is missing.');
   }
 
   let buffer: Buffer;
   if (typeof encryptedData === 'string') {
-    // Check if hex or base64 string
     if (encryptedData.startsWith('\\x')) {
-      // Postgres bytea hex representation
-      buffer = Buffer.from(encryptedData.slice(2), 'hex');
+      const hexPayload = encryptedData.slice(2);
+      if (!hexPayload || hexPayload.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(hexPayload)) {
+        throw new Error('Stored token data has an invalid bytea encoding.');
+      }
+      buffer = Buffer.from(hexPayload, 'hex');
     } else {
-      buffer = Buffer.from(encryptedData, 'hex');
-      if (buffer.length === 0) {
+      if (encryptedData.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(encryptedData)) {
+        buffer = Buffer.from(encryptedData, 'hex');
+      } else {
         buffer = Buffer.from(encryptedData, 'base64');
       }
     }
@@ -73,8 +77,10 @@ export function decryptToken(encryptedData: Buffer | string): string {
     buffer = encryptedData;
   }
 
+  buffer = restoreLegacyBufferSerialization(buffer);
+
   if (buffer.length < IV_LENGTH + AUTH_TAG_LENGTH + 1) {
-    throw new Error('Invalid encrypted token payload: buffer too short.');
+    throw new Error('Stored token data is incomplete.');
   }
 
   const key = getEncryptionKey();
@@ -91,4 +97,29 @@ export function decryptToken(encryptedData: Buffer | string): string {
   ]);
 
   return decrypted.toString('utf8');
+}
+
+function restoreLegacyBufferSerialization(buffer: Buffer): Buffer {
+  if (buffer[0] !== 0x7b || buffer[buffer.length - 1] !== 0x7d) {
+    return buffer;
+  }
+
+  try {
+    const serialized = JSON.parse(buffer.toString('utf8')) as {
+      type?: unknown;
+      data?: unknown;
+    };
+
+    if (
+      serialized.type !== 'Buffer'
+      || !Array.isArray(serialized.data)
+      || !serialized.data.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
+    ) {
+      return buffer;
+    }
+
+    return Buffer.from(serialized.data);
+  } catch {
+    return buffer;
+  }
 }
