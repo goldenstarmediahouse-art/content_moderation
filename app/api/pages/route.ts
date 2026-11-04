@@ -12,6 +12,37 @@ type PageWebhookResult = {
   persistenceError?: string;
 };
 
+function getCiphertextMetadata(value: unknown) {
+  if (Buffer.isBuffer(value)) {
+    return {
+      type: 'Buffer',
+      byteaPrefixPresent: false,
+      byteLength: value.length,
+    };
+  }
+
+  if (typeof value !== 'string') {
+    return {
+      type: value == null ? 'missing' : typeof value,
+      byteaPrefixPresent: false,
+      byteLength: 0,
+    };
+  }
+
+  const byteaPrefixPresent = value.startsWith('\\x');
+  const encodedValue = byteaPrefixPresent ? value.slice(2) : value;
+  const hexBytes = Buffer.from(encodedValue, 'hex');
+  const bytes = byteaPrefixPresent || hexBytes.length > 0
+    ? hexBytes
+    : Buffer.from(encodedValue, 'base64');
+
+  return {
+    type: 'string',
+    byteaPrefixPresent,
+    byteLength: bytes.length,
+  };
+}
+
 async function subscribeAndSaveStatus(
   supabase: ReturnType<typeof createAdminClient>,
   pageDbId: string,
@@ -73,6 +104,52 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { action } = body;
     const supabase = createAdminClient();
+
+    if (action === 'diagnose_page_token') {
+      const result = {
+        pageFound: false,
+        encryptedTokenFound: false,
+        decryptionSuccessful: false,
+        ciphertextMetadata: {
+          type: 'missing',
+          byteaPrefixPresent: false,
+          byteLength: 0,
+        },
+      };
+
+      const { data: pages, error: pageError } = await supabase
+        .from('facebook_pages')
+        .select('id')
+        .eq('id', body.pageDbId || '')
+        .or('name.eq.Golden Star Tv,page_name.eq.Golden Star Tv')
+        .limit(2);
+
+      if (!pageError && pages?.length === 1) {
+        result.pageFound = true;
+        const { data: tokenRecord, error: tokenError } = await supabase
+          .from('page_tokens')
+          .select('encrypted_access_token')
+          .eq('page_id', pages[0].id)
+          .maybeSingle();
+
+        if (!tokenError && tokenRecord?.encrypted_access_token) {
+          const encryptedToken: unknown = tokenRecord.encrypted_access_token;
+          result.encryptedTokenFound = true;
+          result.ciphertextMetadata = getCiphertextMetadata(encryptedToken);
+
+          try {
+            if (Buffer.isBuffer(encryptedToken) || typeof encryptedToken === 'string') {
+              decryptToken(encryptedToken);
+              result.decryptionSuccessful = true;
+            }
+          } catch {
+            result.decryptionSuccessful = false;
+          }
+        }
+      }
+
+      return NextResponse.json(result);
+    }
 
     if (action === 'connect') {
       const { pageId, name, accessToken, category } = body;

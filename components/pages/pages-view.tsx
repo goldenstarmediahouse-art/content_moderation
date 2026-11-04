@@ -20,6 +20,17 @@ interface PagesViewProps {
   admin: CurrentAdmin;
 }
 
+interface PageTokenDiagnostic {
+  pageFound: boolean;
+  encryptedTokenFound: boolean;
+  decryptionSuccessful: boolean;
+  ciphertextMetadata: {
+    type: string;
+    byteaPrefixPresent: boolean;
+    byteLength: number;
+  };
+}
+
 export function PagesView({ initialPages, admin }: PagesViewProps) {
   const router = useRouter();
   const [pages, setPages] = useState(initialPages);
@@ -29,6 +40,9 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
   const [accessToken, setAccessToken] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [retryingPageId, setRetryingPageId] = useState<string | null>(null);
+  const [diagnosingPageId, setDiagnosingPageId] = useState<string | null>(null);
+  const [tokenDiagnostic, setTokenDiagnostic] = useState<PageTokenDiagnostic | null>(null);
+  const [tokenDiagnosticPageId, setTokenDiagnosticPageId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [pageActionError, setPageActionError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -125,6 +139,30 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
       router.refresh();
     } finally {
       setRetryingPageId(null);
+    }
+  }
+
+  async function handleDiagnosePageToken(pageDbId: string) {
+    setDiagnosingPageId(pageDbId);
+    setTokenDiagnostic(null);
+
+    try {
+      const res = await fetch('/api/pages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'diagnose_page_token', pageDbId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to run token diagnostic.');
+      }
+
+      setTokenDiagnostic(data);
+      setTokenDiagnosticPageId(pageDbId);
+    } catch (err: any) {
+      alert(`Token diagnostic failed: ${err.message}`);
+    } finally {
+      setDiagnosingPageId(null);
     }
   }
 
@@ -283,6 +321,12 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
                 </div>
               )}
 
+              {tokenDiagnostic && tokenDiagnosticPageId === page.id && (
+                <pre className="overflow-x-auto rounded border border-charcoal-800 bg-charcoal-950 p-3 text-xs text-charcoal-300">
+                  {JSON.stringify(tokenDiagnostic, null, 2)}
+                </pre>
+              )}
+
               {/* Toggles & Settings Bar */}
               <div className="pt-3 border-t border-charcoal-850 flex flex-wrap items-center justify-between gap-4 text-xs">
                 <div className="flex items-center space-x-6">
@@ -338,6 +382,16 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
 
                 {isSuperAdmin && (
                   <div className="flex items-center space-x-4">
+                    {page.name === 'Golden Star Tv' && (
+                      <button
+                        onClick={() => handleDiagnosePageToken(page.id)}
+                        disabled={diagnosingPageId === page.id}
+                        className="flex items-center space-x-1 text-xs text-charcoal-300 hover:text-white transition-colors disabled:opacity-50"
+                      >
+                        <ShieldAlert className="w-3.5 h-3.5" />
+                        <span>{diagnosingPageId === page.id ? 'Diagnosing...' : 'Run temporary token diagnostic'}</span>
+                      </button>
+                    )}
                     {!page.webhook_subscribed && (
                       <button
                         onClick={() => handleRetryWebhookSubscription(page.id, page.name)}
