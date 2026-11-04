@@ -22,6 +22,7 @@ export async function POST(request: NextRequest) {
       const tokenTest = await inspectPageToken(accessToken);
       const connectionStatus = tokenTest.valid ? 'connected' : 'connection_error';
       const errorMessage = tokenTest.error || null;
+      const now = new Date().toISOString();
 
       // Encrypt the token with AES-256-GCM before saving
       const encryptedToken = encryptToken(accessToken);
@@ -30,15 +31,21 @@ export async function POST(request: NextRequest) {
       const { data: pageRecord, error: pageErr } = await supabase
         .from('facebook_pages')
         .upsert({
+          page_name: name,
+          facebook_page_id: pageId,
           page_id: pageId,
           name,
           category: category || 'Church / Religious Organization',
+          is_active: true,
+          monitoring_enabled: true,
           is_monitored: true,
-          auto_hide_enabled: false, // Strictly false by default
-          auto_approve_safe: true,
+          auto_hide_enabled: false,
+          auto_approve_safe: false,
           connection_status: connectionStatus,
           error_message: errorMessage,
-          last_sync_at: new Date().toISOString(),
+          ...(tokenTest.valid ? { connected_at: now } : {}),
+          last_sync_at: now,
+          updated_at: now,
         }, { onConflict: 'page_id' })
         .select()
         .single();
@@ -98,7 +105,10 @@ export async function POST(request: NextRequest) {
         updated_at: new Date().toISOString(),
       };
 
-      if (setting === 'is_monitored') updateData.is_monitored = Boolean(value);
+      if (setting === 'is_monitored') {
+        updateData.is_monitored = Boolean(value);
+        updateData.monitoring_enabled = Boolean(value);
+      }
       if (setting === 'auto_hide_enabled') updateData.auto_hide_enabled = Boolean(value);
       if (setting === 'auto_approve_safe') updateData.auto_approve_safe = Boolean(value);
 

@@ -105,6 +105,11 @@ export type Database = {
       facebook_pages: {
         Row: {
           id: string;
+          page_name: string;
+          facebook_page_id: string;
+          is_active: boolean;
+          monitoring_enabled: boolean;
+          connected_at: string | null;
           page_id: string;
           name: string;
           category: string | null;
@@ -120,6 +125,11 @@ export type Database = {
         };
         Insert: {
           id?: string;
+          page_name: string;
+          facebook_page_id: string;
+          is_active?: boolean;
+          monitoring_enabled?: boolean;
+          connected_at?: string | null;
           page_id: string;
           name: string;
           category?: string | null;
@@ -135,6 +145,11 @@ export type Database = {
         };
         Update: {
           id?: string;
+          page_name?: string;
+          facebook_page_id?: string;
+          is_active?: boolean;
+          monitoring_enabled?: boolean;
+          connected_at?: string | null;
           page_id?: string;
           name?: string;
           category?: string | null;
@@ -156,7 +171,8 @@ export type Database = {
           page_id: string;
           encrypted_access_token: any;
           token_type: string;
-          expires_at: string | null;
+          token_expires_at: string | null;
+          last_refreshed_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -165,7 +181,8 @@ export type Database = {
           page_id: string;
           encrypted_access_token: any;
           token_type?: string;
-          expires_at?: string | null;
+          token_expires_at?: string | null;
+          last_refreshed_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -174,7 +191,8 @@ export type Database = {
           page_id?: string;
           encrypted_access_token?: any;
           token_type?: string;
-          expires_at?: string | null;
+          token_expires_at?: string | null;
+          last_refreshed_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
