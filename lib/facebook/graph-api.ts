@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 
-const GRAPH_API_VERSION = 'v19.0';
+const GRAPH_API_VERSION = 'v26.0';
 const GRAPH_API_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 
 export interface FacebookPageAccount {
@@ -149,37 +149,57 @@ export async function unhideFacebookComment(
 export async function subscribePageToWebhooks(
   pageId: string,
   pageAccessToken: string
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; errorCode?: number | string; errorMessage?: string }> {
   try {
     const url = `${GRAPH_API_BASE}/${encodeURIComponent(pageId)}/subscribed_apps`;
     const response = await fetch(url, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: JSON.stringify({
-        subscribed_fields: ['feed'],
+      body: new URLSearchParams({
+        subscribed_fields: 'feed',
         access_token: pageAccessToken,
       }),
     });
 
     const json = await response.json();
 
-    if (!response.ok || json.error) {
+    if (!response.ok || json.error || json.success !== true) {
       const err = json.error as FacebookGraphError;
+      const errorCode = err?.code ?? response.status;
+      const errorMessage = redactAccessToken(
+        err?.message || 'Meta did not confirm the Page feed webhook subscription.',
+        pageAccessToken
+      );
+      console.error('Facebook Page webhook subscription failed', { errorCode, errorMessage });
       return {
         success: false,
-        error: `Webhook Subscription Error (${err?.code || response.status}): ${err?.message || 'Failed to subscribe page to feed webhooks'}`,
+        errorCode,
+        errorMessage,
       };
     }
 
     return { success: true };
   } catch (err: any) {
+    const errorMessage = redactAccessToken(
+      err?.message || 'Unknown network error while subscribing the Page to webhooks.',
+      pageAccessToken
+    );
+    console.error('Facebook Page webhook subscription request failed', {
+      errorCode: 'NETWORK_ERROR',
+      errorMessage,
+    });
     return {
       success: false,
-      error: `Network failure subscribing to Facebook webhooks: ${err.message}`,
+      errorCode: 'NETWORK_ERROR',
+      errorMessage,
     };
   }
+}
+
+function redactAccessToken(message: string, pageAccessToken: string): string {
+  return pageAccessToken ? message.split(pageAccessToken).join('[REDACTED]') : message;
 }
 
 /**

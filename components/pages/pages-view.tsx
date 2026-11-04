@@ -28,7 +28,9 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
   const [name, setName] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [retryingPageId, setRetryingPageId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [pageActionError, setPageActionError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   const isSuperAdmin = admin.role === 'super_admin';
@@ -37,6 +39,7 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
     e.preventDefault();
     setSubmitting(true);
     setErrorMsg(null);
+    setPageActionError(null);
     setSuccessMsg(null);
 
     try {
@@ -56,7 +59,17 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
         throw new Error(data.error || 'Failed to connect page.');
       }
 
-      setSuccessMsg(`Successfully connected "${data.page.name}". Webhook subscription: ${data.webhookSubscribed ? 'Active' : 'Pending configuration'}`);
+      if (!data.tokenValid) {
+        setPageActionError(
+          `Saved "${data.page.name}", but Page Access Token validation failed: ${data.webhookError || 'Unknown token error.'}`
+        );
+      } else if (data.webhookSubscribed) {
+        setSuccessMsg(`Successfully connected "${data.page.name}". Feed webhook subscription is active.`);
+      } else {
+        setPageActionError(
+          `Connected "${data.page.name}", but the webhook subscription failed: ${data.webhookError || data.webhookStatusError || 'Unknown error.'}`
+        );
+      }
       setShowConnectModal(false);
       setPageId('');
       setName('');
@@ -66,6 +79,52 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
       setErrorMsg(err.message);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleRetryWebhookSubscription(pageDbId: string, pageName: string) {
+    setRetryingPageId(pageDbId);
+    setPageActionError(null);
+    setSuccessMsg(null);
+
+    try {
+      const res = await fetch('/api/pages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'retry_webhook_subscription',
+          pageDbId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to retry the webhook subscription.');
+      }
+
+      setPages((prev) => prev.map((page) => page.id === pageDbId
+        ? {
+            ...page,
+            webhook_subscribed: data.webhookSubscribed,
+            error_message: data.webhookSubscribed
+              ? null
+              : `Webhook subscription failed (${data.webhookErrorCode || 'unknown'}): ${data.webhookError || 'Unknown subscription error.'}`,
+          }
+        : page
+      ));
+
+      if (data.webhookSubscribed) {
+        setSuccessMsg(`Feed webhook subscription is active for "${pageName}".`);
+      } else {
+        setPageActionError(
+          `Webhook subscription failed for "${pageName}" (${data.webhookErrorCode || 'unknown'}): ${data.webhookError || 'Unknown subscription error.'}`
+        );
+      }
+      router.refresh();
+    } catch (err: any) {
+      alert(`Webhook subscription retry failed: ${err.message}`);
+      router.refresh();
+    } finally {
+      setRetryingPageId(null);
     }
   }
 
@@ -152,6 +211,13 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
         <div className="p-3 rounded bg-emerald-950/40 border border-emerald-800/60 text-emerald-300 text-xs flex items-center space-x-2">
           <CheckCircle className="w-4 h-4 flex-shrink-0" />
           <span>{successMsg}</span>
+        </div>
+      )}
+
+      {pageActionError && (
+        <div className="p-3 rounded bg-red-950/40 border border-red-800/60 text-red-300 text-xs flex items-center space-x-2">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          <span>{pageActionError}</span>
         </div>
       )}
 
@@ -271,13 +337,25 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
                 </div>
 
                 {isSuperAdmin && (
-                  <button
-                    onClick={() => handleDisconnect(page.id, page.name)}
-                    className="flex items-center space-x-1 text-xs text-red-400 hover:text-red-300 transition-colors"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Disconnect</span>
-                  </button>
+                  <div className="flex items-center space-x-4">
+                    {!page.webhook_subscribed && (
+                      <button
+                        onClick={() => handleRetryWebhookSubscription(page.id, page.name)}
+                        disabled={retryingPageId === page.id}
+                        className="flex items-center space-x-1 text-xs text-charcoal-300 hover:text-white transition-colors disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${retryingPageId === page.id ? 'animate-spin' : ''}`} />
+                        <span>{retryingPageId === page.id ? 'Retrying...' : 'Retry webhook subscription'}</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDisconnect(page.id, page.name)}
+                      className="flex items-center space-x-1 text-xs text-red-400 hover:text-red-300 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Disconnect</span>
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
@@ -340,8 +418,8 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
                   className="w-full px-3 py-2 bg-charcoal-950 border border-charcoal-800 rounded text-charcoal-100 focus:outline-none focus:border-charcoal-600 font-mono text-[11px]"
                 />
                 <span className="text-[10px] text-charcoal-500">
-                  Requires <code className="text-charcoal-400">pages_read_engagement</code> and{' '}
-                  <code className="text-charcoal-400">pages_manage_posts</code> permissions.
+                  Webhook subscription requires <code className="text-charcoal-400">pages_manage_metadata</code>.
+                  Comment ingestion also requires <code className="text-charcoal-400">pages_read_engagement</code>.
                 </span>
               </div>
 

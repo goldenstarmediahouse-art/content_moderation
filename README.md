@@ -10,7 +10,7 @@ A secure, production-grade Facebook comment moderation system designed specifica
 - **Language**: TypeScript (Strict typing with full Supabase PostgreSQL schema mapping)
 - **Styling**: Tailwind CSS (Restrained dark charcoal enterprise palette: `#0B0E14` base, flat surfaces, thin borders, no decorative gimmickry)
 - **Database & Auth**: Supabase PostgreSQL with Row Level Security (RLS) & Supabase Authentication
-- **Facebook Integration**: Meta Graph API (v19.0) & HMAC-SHA256 Webhook Ingestion
+- **Facebook Integration**: Meta Graph API (v26.0) & HMAC-SHA256 Webhook Ingestion
 - **Token Security**: Server-side AES-256-GCM authenticated encryption for all stored Facebook Page Access Tokens
 - **AI Moderation Engine**: OpenAI GPT-4o-mini with native comprehension of English, Shona (chiShona idioms), Ndebele (isiNdebele), and code-switching
 
