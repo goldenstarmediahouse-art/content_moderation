@@ -243,7 +243,7 @@ export async function inspectPageToken(
 
     // 1. Direct Page identity verification via Meta Graph API /me endpoint.
     // For a Page Access Token, /me resolves to the Page itself without needing app credentials.
-    const meResponse = await fetch(`${GRAPH_API_BASE}/me?fields=id,name,category`, {
+    const meResponse = await fetch(`${GRAPH_API_BASE}/me?fields=id,name`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${pageAccessToken}`,

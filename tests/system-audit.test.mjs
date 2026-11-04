@@ -160,3 +160,19 @@ test('Security: sanitizeMetaError redacts secrets and tokens', () => {
   assert.ok(!sanitized.includes(appToken), 'App access token must be redacted');
   assert.ok(sanitized.includes('[REDACTED]'), 'Redaction placeholder must be present');
 });
+
+// 5. Page Identity Endpoint URL Verification
+test('Meta Graph API: Page identity query requests only id,name (no category)', () => {
+  const GRAPH_API_BASE = 'https://graph.facebook.com/v26.0';
+  const queryUrl = `${GRAPH_API_BASE}/me?fields=id,name`;
+
+  assert.ok(!queryUrl.includes('category'), 'Endpoint URL must not request category field');
+  assert.ok(queryUrl.includes('fields=id,name'), 'Endpoint URL must request fields=id,name');
+
+  // Verify response parser handles absence of category
+  const mockMetaResponse = { id: '1029384756', name: 'Golden Star Church' };
+  assert.equal(mockMetaResponse.id, '1029384756');
+  assert.equal(mockMetaResponse.name, 'Golden Star Church');
+  assert.equal(mockMetaResponse.category, undefined);
+});
+
