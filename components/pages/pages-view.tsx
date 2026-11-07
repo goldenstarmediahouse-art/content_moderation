@@ -41,6 +41,7 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
   const [accessToken, setAccessToken] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [retryingPageId, setRetryingPageId] = useState<string | null>(null);
+  const [syncingPageId, setSyncingPageId] = useState<string | null>(null);
   const [diagnosingPageId, setDiagnosingPageId] = useState<string | null>(null);
   const [tokenDiagnostic, setTokenDiagnostic] = useState<PageTokenDiagnostic | null>(null);
   const [tokenDiagnosticPageId, setTokenDiagnosticPageId] = useState<string | null>(null);
@@ -197,6 +198,35 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
       router.refresh();
     } catch (err: any) {
       alert(`Error updating page setting: ${err.message}`);
+    }
+  }
+
+  async function handleSyncComments(pageDbId: string, pageName: string) {
+    setSyncingPageId(pageDbId);
+    setPageActionError(null);
+    setSuccessMsg(null);
+
+    try {
+      const res = await fetch('/api/pages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sync_comments', pageDbId }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        const details = Array.isArray(data.errors) ? data.errors.join(' ') : data.error;
+        throw new Error(details || 'Facebook comment synchronization failed.');
+      }
+
+      setSuccessMsg(
+        `Historical sync complete for "${pageName}". Posts checked: ${data.postsProcessed}; comments imported: ${data.commentsSynced}; comments updated: ${data.commentsUpdated}; moderation jobs queued: ${data.moderationJobsQueued}.`
+      );
+      router.refresh();
+    } catch (err: any) {
+      setPageActionError(`Comment synchronization failed for "${pageName}": ${err.message}`);
+    } finally {
+      setSyncingPageId(null);
     }
   }
 
@@ -413,6 +443,14 @@ export function PagesView({ initialPages, admin }: PagesViewProps) {
 
                 {isSuperAdmin && (
                   <div className="flex items-center space-x-4">
+                    <button
+                      onClick={() => handleSyncComments(page.id, page.name)}
+                      disabled={syncingPageId === page.id}
+                      className="flex items-center space-x-1 text-xs text-charcoal-300 hover:text-white transition-colors disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${syncingPageId === page.id ? 'animate-spin' : ''}`} />
+                      <span>{syncingPageId === page.id ? 'Syncing...' : 'Sync Comments'}</span>
+                    </button>
                     <button
                       onClick={() => handleDiagnosePageToken(page.id)}
                       disabled={diagnosingPageId === page.id}

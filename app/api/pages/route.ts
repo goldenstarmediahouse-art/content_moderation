@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireSuperAdmin } from '@/lib/auth/session';
-import { getScopedAdminSupabaseClient } from '@/lib/supabase/client-resolver';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { decryptToken, encryptToken } from '@/lib/crypto/token-encryption';
 import { inspectPageToken, subscribePageToWebhooks } from '@/lib/facebook/graph-api';
 import { syncFacebookPageComments } from '@/lib/facebook/sync-service';
+import type { SyncPageCommentsResult } from '@/lib/facebook/sync-service';
 import { normalizePageAccessToken } from '@/lib/facebook/page-access-token';
 import { Database } from '@/types/database';
 
@@ -13,6 +14,48 @@ type PageWebhookResult = {
   errorMessage?: string;
   persistenceError?: string;
 };
+
+async function syncPageComments(
+  supabase: ReturnType<typeof createAdminClient>,
+  pageDbId: string
+): Promise<SyncPageCommentsResult> {
+  const { data: page, error: pageError } = await supabase
+    .from('facebook_pages')
+    .select('id, page_id, connection_status')
+    .eq('id', pageDbId)
+    .maybeSingle();
+
+  if (pageError) throw new Error(`Failed to load Facebook Page: ${pageError.message}`);
+  if (!page) throw new Error('Facebook Page not found.');
+  if (page.connection_status !== 'connected') {
+    throw new Error('Only a connected Facebook Page can sync comments.');
+  }
+
+  const { data: tokenRecord, error: tokenError } = await supabase
+    .from('page_tokens')
+    .select('encrypted_access_token')
+    .eq('page_id', page.id)
+    .maybeSingle();
+
+  if (tokenError) throw new Error(`Failed to load the stored Page token: ${tokenError.message}`);
+  if (!tokenRecord?.encrypted_access_token) {
+    throw new Error('No encrypted Page Access Token is stored for this Page.');
+  }
+
+  let pageAccessToken: string;
+  try {
+    pageAccessToken = decryptToken(tokenRecord.encrypted_access_token);
+  } catch {
+    throw new Error('The stored Page Access Token could not be decrypted.');
+  }
+
+  return syncFacebookPageComments({
+    pageDbId: page.id,
+    pageFacebookId: page.page_id,
+    pageAccessToken,
+    supabaseClient: supabase,
+  });
+}
 
 function getCiphertextMetadata(value: unknown) {
   if (Buffer.isBuffer(value)) {
@@ -360,6 +403,16 @@ export async function POST(request: NextRequest) {
         webhookErrorCode: webhookResult.errorCode,
         webhookError: webhookResult.errorMessage,
       });
+    }
+
+    if (action === 'sync_comments') {
+      const { pageDbId } = body;
+      if (!pageDbId) {
+        return NextResponse.json({ error: 'Missing pageDbId' }, { status: 400 });
+      }
+
+      const result = await syncPageComments(supabase, pageDbId);
+      return NextResponse.json(result, { status: result.success ? 200 : 502 });
     }
 
     if (action === 'toggle_setting') {

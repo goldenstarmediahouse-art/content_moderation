@@ -1,5 +1,6 @@
 import { fetchPagePosts, fetchPostComments, FacebookCommentItem, FacebookPostItem } from './graph-api';
 import { getScopedAdminSupabaseClient } from '@/lib/supabase/client-resolver';
+import { processModerationJob } from '@/lib/moderation/job-runner';
 
 export interface SyncPageCommentsOptions {
   pageDbId: string;
@@ -15,6 +16,7 @@ export interface SyncPageCommentsResult {
   postsProcessed: number;
   commentsSynced: number;
   commentsUpdated: number;
+  moderationJobsQueued: number;
   errors: string[];
 }
 
@@ -38,6 +40,7 @@ export async function syncFacebookPageComments(
     postsProcessed: 0,
     commentsSynced: 0,
     commentsUpdated: 0,
+    moderationJobsQueued: 0,
     errors: [],
   };
 
@@ -64,11 +67,15 @@ export async function syncFacebookPageComments(
     }
 
     // Also check if any posts are already stored locally for this page that might not be in the top 25
-    const { data: storedPosts } = await supabase
+    const { data: storedPosts, error: storedPostsErr } = await supabase
       .from('posts')
       .select('facebook_post_id, message, permalink_url, created_time')
       .eq('page_id', pageDbId)
       .limit(50);
+
+    if (storedPostsErr) {
+      result.errors.push(`Failed to load stored posts: ${storedPostsErr.message}`);
+    }
 
     if (storedPosts && storedPosts.length > 0) {
       const existingPostIds = new Set(targetPosts.map((p) => p.id));
@@ -112,8 +119,12 @@ export async function syncFacebookPageComments(
         `[Facebook Comment Sync] Failed to upsert post: ${post.id} | Error: ${postErr.message}`
       );
       result.errors.push(`Post upsert error (${post.id}): ${postErr.message}`);
+      continue;
     } else if (postRecord) {
       postDbId = postRecord.id;
+    } else {
+      result.errors.push(`Post upsert returned no record (${post.id}).`);
+      continue;
     }
 
     // 3. Fetch comments for this post calling /{POST_ID}/comments?fields=id,message,created_time,from
@@ -129,34 +140,10 @@ export async function syncFacebookPageComments(
     // 4. Upsert each comment into 'comments' table
     for (const comment of commentsRes.comments) {
       try {
-        const { data: existingComment } = await supabase
+        const { data: insertedComment, error: insertErr } = await supabase
           .from('comments')
-          .select('id, moderation_status, is_hidden, external_action_status')
-          .eq('facebook_comment_id', comment.id)
-          .maybeSingle();
-
-        if (existingComment) {
-          // Update comment message and author, but strictly preserve human moderation decisions
-          const { error: updateErr } = await supabase
-            .from('comments')
-            .update({
-              message: comment.message,
-              commenter_name: comment.from?.name || 'Facebook User',
-              commenter_id: comment.from?.id || null,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', existingComment.id);
-
-          if (updateErr) {
-            result.errors.push(`Comment update error (${comment.id}): ${updateErr.message}`);
-          } else {
-            result.commentsUpdated++;
-          }
-        } else {
-          // Insert new incoming comment
-          const { error: insertErr } = await supabase
-            .from('comments')
-            .insert({
+          .upsert(
+            {
               page_id: pageDbId,
               post_id: postDbId,
               facebook_comment_id: comment.id,
@@ -168,13 +155,77 @@ export async function syncFacebookPageComments(
               moderation_status: 'pending',
               external_action_status: 'none',
               is_hidden: false,
-            });
+            },
+            { onConflict: 'facebook_comment_id', ignoreDuplicates: true }
+          )
+          .select('id')
+          .maybeSingle();
 
-          if (insertErr) {
-            result.errors.push(`Comment insert error (${comment.id}): ${insertErr.message}`);
-          } else {
-            result.commentsSynced++;
+        if (insertErr) {
+          result.errors.push(`Comment insert error (${comment.id}): ${insertErr.message}`);
+          continue;
+        }
+
+        if (!insertedComment) {
+          const { data: existingComment, error: existingErr } = await supabase
+            .from('comments')
+            .select('id')
+            .eq('facebook_comment_id', comment.id)
+            .maybeSingle();
+
+          if (existingErr) {
+            result.errors.push(`Comment lookup error (${comment.id}): ${existingErr.message}`);
+            continue;
           }
+          if (!existingComment) {
+            result.errors.push(`Comment upsert returned no record (${comment.id}).`);
+            continue;
+          }
+
+          // Update existing content without changing moderator decisions.
+          const { error: updateErr } = await supabase
+            .from('comments')
+            .update({
+              message: comment.message,
+              commenter_name: comment.from?.name || 'Facebook User',
+              commenter_id: comment.from?.id || null,
+              post_id: postDbId,
+              facebook_post_id: post.id,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', existingComment.id);
+
+          if (updateErr) {
+            result.errors.push(`Comment update error (${comment.id}): ${updateErr.message}`);
+          } else {
+            result.commentsUpdated++;
+          }
+        } else {
+          result.commentsSynced++;
+
+          const { data: job, error: jobErr } = await supabase
+            .from('moderation_jobs')
+            .insert({
+              comment_id: insertedComment.id,
+              status: 'pending',
+            })
+            .select('id')
+            .single();
+
+          if (jobErr || !job) {
+            result.errors.push(
+              `Moderation job enqueue error (${comment.id}): ${jobErr?.message || 'No job record returned.'}`
+            );
+            continue;
+          }
+
+          result.moderationJobsQueued++;
+          processModerationJob(job.id).catch((err) => {
+            console.error(
+              `[Facebook Comment Sync] Background moderation job failed (${job.id}):`,
+              err
+            );
+          });
         }
       } catch (err: any) {
         result.errors.push(`Error processing comment ${comment.id}: ${err.message}`);
@@ -184,7 +235,7 @@ export async function syncFacebookPageComments(
 
   // 5. Update last_sync_at timestamp on the facebook_pages record
   const now = new Date().toISOString();
-  await supabase
+  const { error: syncUpdateErr } = await supabase
     .from('facebook_pages')
     .update({
       last_sync_at: now,
@@ -192,10 +243,14 @@ export async function syncFacebookPageComments(
     })
     .eq('id', pageDbId);
 
+  if (syncUpdateErr) {
+    result.errors.push(`Failed to update Page sync time: ${syncUpdateErr.message}`);
+  }
+
   console.log(
-    `[Facebook Comment Sync] Complete | Page: ${pageFacebookId} | Posts: ${result.postsProcessed} | Comments New: ${result.commentsSynced} | Comments Updated: ${result.commentsUpdated} | Errors: ${result.errors.length}`
+    `[Facebook Comment Sync] Complete | Page: ${pageFacebookId} | Posts: ${result.postsProcessed} | Comments New: ${result.commentsSynced} | Comments Updated: ${result.commentsUpdated} | Moderation Jobs: ${result.moderationJobsQueued} | Errors: ${result.errors.length}`
   );
 
-  result.success = result.errors.length === 0 || result.commentsSynced > 0 || result.commentsUpdated > 0;
+  result.success = result.errors.length === 0;
   return result;
 }
