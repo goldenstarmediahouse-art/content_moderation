@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireActiveAdmin } from '@/lib/auth/session';
 import { createAdminClient } from '@/lib/supabase/admin';
+import {
+  canClaimAssignment,
+  canReassignAssignment,
+  canReleaseAssignment,
+  loadCommentAssignments,
+  UNKNOWN_ASSIGNEE_ID,
+} from '@/lib/comments/comment-state';
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,15 +28,22 @@ export async function POST(request: NextRequest) {
     const supabase = createAdminClient();
 
     // 1. Fetch current comment state
-    const { data: comment, error: fetchErr } = await supabase
+    const { data: commentRow, error: fetchErr } = await supabase
       .from('comments')
-      .select('*, assigned_admin:admin_users!comments_assigned_to_fkey(*)')
+      .select('*')
       .eq('id', commentId)
       .single();
 
-    if (fetchErr || !comment) {
+    if (fetchErr || !commentRow) {
       return NextResponse.json({ error: 'Comment record not found' }, { status: 404 });
     }
+    const assignments = await loadCommentAssignments(supabase, [commentRow.id]);
+    const currentAssignedTo = assignments.get(commentRow.id)?.assignedTo || null;
+
+    const { data: commentPost } = commentRow.post_id
+      ? await supabase.from('posts').select('page_id').eq('id', commentRow.post_id).maybeSingle()
+      : { data: null };
+    const pageId = commentPost?.page_id || null;
 
     let newAssignedTo: string | null = null;
     let actionType: 'claimed' | 'assigned' | 'reassigned' | 'released' = 'claimed';
@@ -38,8 +52,18 @@ export async function POST(request: NextRequest) {
     // 2. Process specific assignment action
     if (action === 'claim') {
       // Check if already claimed by someone else
-      if (comment.assigned_to && comment.assigned_to !== admin.id) {
-        const otherName = (comment as any).assigned_admin?.full_name || (comment as any).assigned_admin?.email || 'another moderator';
+      if (!canClaimAssignment(currentAssignedTo, admin.id)) {
+        const { data: otherAdmin } = currentAssignedTo
+          ? await supabase
+            .from('admin_users')
+            .select('full_name, email')
+            .eq('id', currentAssignedTo)
+            .maybeSingle()
+          : { data: null };
+        const otherName = otherAdmin?.full_name || otherAdmin?.email ||
+          (currentAssignedTo === UNKNOWN_ASSIGNEE_ID
+            ? 'a historical assignee with unavailable identity'
+            : 'another moderator');
         return NextResponse.json(
           {
             error: `Cannot claim: This case was already claimed by ${otherName}.`,
@@ -65,7 +89,7 @@ export async function POST(request: NextRequest) {
       actionDescription = `Super Admin assigned case to moderator`;
     } else if (action === 'reassign') {
       // Allowed for Super Admin or current assignee
-      if (admin.role !== 'super_admin' && comment.assigned_to !== admin.id) {
+      if (!canReassignAssignment(currentAssignedTo, admin.id, admin.role === 'super_admin')) {
         return NextResponse.json({ error: 'You do not have permission to reassign this case.' }, { status: 403 });
       }
 
@@ -75,10 +99,10 @@ export async function POST(request: NextRequest) {
 
       newAssignedTo = targetModeratorId;
       actionType = 'reassigned';
-      actionDescription = `Reassigned from ${comment.assigned_to ? 'previous assignee' : 'queue'} by ${admin.full_name || admin.email}`;
+      actionDescription = `Reassigned from ${currentAssignedTo ? 'previous assignee' : 'queue'} by ${admin.full_name || admin.email}`;
     } else if (action === 'release') {
       // Allowed for Super Admin or current assignee
-      if (admin.role !== 'super_admin' && comment.assigned_to !== admin.id) {
+      if (!canReleaseAssignment(currentAssignedTo, admin.id, admin.role === 'super_admin')) {
         return NextResponse.json({ error: 'You cannot release an assignment that is not assigned to you.' }, { status: 403 });
       }
 
@@ -91,40 +115,36 @@ export async function POST(request: NextRequest) {
       actionDescription = `Released back to unassigned queue: ${reason}`;
     }
 
-    // 3. Update comments table
-    const { error: updateErr } = await supabase
-      .from('comments')
-      .update({
-        assigned_to: newAssignedTo,
-        assigned_at: newAssignedTo ? new Date().toISOString() : null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', comment.id);
-
-    if (updateErr) {
-      return NextResponse.json({ error: updateErr.message }, { status: 500 });
-    }
-
-    // 4. Record action in moderation_actions
-    await supabase.from('moderation_actions').insert({
-      comment_id: comment.id,
+    // Store assignment state in the action history because the comments table has no assignment columns.
+    const assignmentTime = newAssignedTo ? new Date().toISOString() : null;
+    const { error: actionError } = await supabase.from('moderation_actions').insert({
+      comment_id: commentRow.id,
       action: actionType,
       reason: reason ? `${actionDescription} (${reason})` : actionDescription,
       actor_type: admin.role,
       actor_id: admin.id,
       outcome: 'success',
+      api_response: {
+        comment_state: {
+          assigned_to: newAssignedTo,
+          assigned_at: assignmentTime,
+        },
+      },
     });
+    if (actionError) {
+      return NextResponse.json({ error: actionError.message }, { status: 500 });
+    }
 
     // 5. Notify target moderator if newly assigned or reassigned
     if (newAssignedTo && newAssignedTo !== admin.id) {
       await supabase.from('notifications').insert({
         admin_id: newAssignedTo,
         title: actionType === 'reassigned' ? 'Case Reassigned To You' : 'New Case Assigned To You',
-        message: `${admin.full_name || admin.email} assigned comment "${comment.message.slice(0, 80)}" to your queue.`,
+        message: `${admin.full_name || admin.email} assigned comment "${commentRow.message.slice(0, 80)}" to your queue.`,
         type: actionType === 'reassigned' ? 'reassignment' : 'assignment',
         severity: 'medium',
-        comment_id: comment.id,
-        page_id: comment.page_id,
+        comment_id: commentRow.id,
+        page_id: pageId,
       });
     }
 
@@ -133,9 +153,9 @@ export async function POST(request: NextRequest) {
       admin_id: admin.id,
       action: `COMMENT_${actionType.toUpperCase()}`,
       entity_type: 'comment',
-      entity_id: comment.id,
+      entity_id: commentRow.id,
       details: {
-        previous_assignee: comment.assigned_to,
+        previous_assignee: currentAssignedTo,
         new_assignee: newAssignedTo,
         reason,
       },
@@ -143,7 +163,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      commentId: comment.id,
+      commentId: commentRow.id,
       actionType,
       assigned_to: newAssignedTo,
     });

@@ -2,6 +2,7 @@ import React from 'react';
 import { AppNavigation } from './app-navigation';
 import { CurrentAdmin } from '@/lib/auth/session';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { getAssignedCommentIds, resolveCommentAssignments } from '@/lib/comments/comment-state';
 
 interface AppShellProps {
   admin: CurrentAdmin;
@@ -35,24 +36,50 @@ export async function AppShell({ admin, title, children }: AppShellProps) {
 
     unreadNotifications = notifCount || 0;
 
-    // 3. My Assigned comments count
-    const { count: assignedCount } = await supabase
-      .from('comments')
-      .select('*', { count: 'exact', head: true })
-      .eq('assigned_to', admin.id)
-      .in('moderation_status', ['pending', 'review_required', 'escalated']);
+    // 3. My Assigned comments count from the moderation action history
+    const [
+      { data: assignmentActions, error: assignmentActionsError },
+      { data: assignmentAudits, error: assignmentAuditsError },
+    ] = await Promise.all([
+      supabase
+        .from('moderation_actions')
+        .select('comment_id, action, actor_id, api_response, created_at')
+        .in('action', ['assigned', 'reassigned', 'claimed', 'released'])
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('audit_logs')
+        .select('entity_id, action, details, created_at, admin_id')
+        .eq('entity_type', 'comment')
+        .in('action', ['COMMENT_ASSIGNED', 'COMMENT_REASSIGNED', 'COMMENT_CLAIMED', 'COMMENT_RELEASED'])
+        .order('created_at', { ascending: false }),
+    ]);
+    if (assignmentActionsError) throw assignmentActionsError;
+    if (assignmentAuditsError) throw assignmentAuditsError;
 
-    myAssignedCount = assignedCount || 0;
+    const assignmentByComment = resolveCommentAssignments(
+      assignmentActions || [],
+      assignmentAudits || []
+    );
+    const assignedComments = getAssignedCommentIds(assignmentByComment, admin.id);
+
+    if (assignedComments.length > 0) {
+      const { count: assignedCount } = await supabase
+        .from('comments')
+        .select('*', { count: 'exact', head: true })
+        .in('id', assignedComments)
+        .in('moderation_status', ['pending', 'review_required', 'escalated']);
+      myAssignedCount = assignedCount || 0;
+    }
 
     // 4. Escalations count
     const { count: escCount } = await supabase
       .from('comments')
       .select('*', { count: 'exact', head: true })
-      .or('is_escalated.eq.true,moderation_status.eq.escalated');
+      .eq('moderation_status', 'escalated');
 
     escalationsCount = escCount || 0;
   } catch (err) {
-    // Database access fallback if table or columns are not yet provisioned
+    console.error('Failed to load dashboard moderation counts:', err);
   }
 
   return (

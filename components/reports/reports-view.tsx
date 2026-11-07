@@ -14,12 +14,12 @@ import {
   User,
   Users,
 } from 'lucide-react';
-import { Database } from '@/types/database';
+import { CommentWithDetails, Database } from '@/types/database';
 
 export type TimeframePeriod = 'daily' | 'weekly' | 'monthly' | 'all';
 
 interface ReportsViewProps {
-  comments: Database['public']['Tables']['comments']['Row'][];
+  comments: CommentWithDetails[];
   actions: (Database['public']['Tables']['moderation_actions']['Row'] & {
     actor?: { full_name: string | null; email: string; role: string } | null;
   })[];

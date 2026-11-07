@@ -1,6 +1,7 @@
 import { fetchPagePosts, fetchPostComments, FacebookCommentItem, FacebookPostItem } from './graph-api';
 import { getScopedAdminSupabaseClient } from '@/lib/supabase/client-resolver';
 import { processModerationJob } from '@/lib/moderation/job-runner';
+import { buildCommentRefreshPayload } from '@/lib/comments/comment-state';
 
 export interface SyncPageCommentsOptions {
   pageDbId: string;
@@ -126,6 +127,10 @@ export async function syncFacebookPageComments(
       result.errors.push(`Post upsert returned no record (${post.id}).`);
       continue;
     }
+    if (!postDbId) {
+      result.errors.push(`Post upsert returned no database ID (${post.id}).`);
+      continue;
+    }
 
     // 3. Fetch comments for this post calling /{POST_ID}/comments?fields=id,message,created_time,from
     const commentsRes = await fetchPostComments(post.id, pageAccessToken, 100);
@@ -144,17 +149,15 @@ export async function syncFacebookPageComments(
           .from('comments')
           .upsert(
             {
-              page_id: pageDbId,
               post_id: postDbId,
               facebook_comment_id: comment.id,
-              facebook_post_id: post.id,
-              commenter_id: comment.from?.id || null,
+              commenter_facebook_id: comment.from?.id || null,
               commenter_name: comment.from?.name || 'Facebook User',
               message: comment.message,
-              created_time: comment.created_time,
+              comment_created_at: comment.created_time,
               moderation_status: 'pending',
-              external_action_status: 'none',
               is_hidden: false,
+              is_deleted: false,
             },
             { onConflict: 'facebook_comment_id', ignoreDuplicates: true }
           )
@@ -185,14 +188,7 @@ export async function syncFacebookPageComments(
           // Update existing content without changing moderator decisions.
           const { error: updateErr } = await supabase
             .from('comments')
-            .update({
-              message: comment.message,
-              commenter_name: comment.from?.name || 'Facebook User',
-              commenter_id: comment.from?.id || null,
-              post_id: postDbId,
-              facebook_post_id: post.id,
-              updated_at: new Date().toISOString(),
-            })
+            .update(buildCommentRefreshPayload(postDbId, comment, new Date().toISOString()))
             .eq('id', existingComment.id);
 
           if (updateErr) {

@@ -4,6 +4,7 @@ import { getCurrentAdmin } from '@/lib/auth/session';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { AppShell } from '@/components/layout/app-shell';
 import { ReportsView } from '@/components/reports/reports-view';
+import { enrichCommentsWithDetails } from '@/lib/comments/enrich-comments';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,10 +17,11 @@ export default async function ReportsPage() {
   const supabase = await createServerSupabaseClient();
 
   // Fetch comments
-  const { data: comments } = await supabase
+  const { data: commentRows } = await supabase
     .from('comments')
     .select('*')
-    .order('created_time', { ascending: false });
+    .order('comment_created_at', { ascending: false });
+  const comments = await enrichCommentsWithDetails(supabase, commentRows || []);
 
   // Fetch actions
   const { data: actions } = await supabase

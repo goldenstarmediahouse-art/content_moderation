@@ -138,6 +138,9 @@ export async function POST(request: NextRequest) {
           .from('comments')
           .update({
             message: messageText,
+            commenter_facebook_id: commenterId,
+            commenter_name: commenterName,
+            comment_updated_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           })
           .eq('id', commentId);
@@ -145,16 +148,16 @@ export async function POST(request: NextRequest) {
         const { data: insertedComment, error: insertError } = await supabase
           .from('comments')
           .insert({
-            page_id: pageRecord.id,
             post_id: postId,
             facebook_comment_id: commentFacebookId,
-            facebook_post_id: postFacebookId,
-            parent_comment_id: val.parent_id || null,
+            parent_facebook_comment_id: val.parent_id || null,
             source_event_id: sourceEventId,
-            commenter_id: commenterId,
+            commenter_facebook_id: commenterId,
             commenter_name: commenterName,
             message: messageText,
-            created_time: createdUnixTime.toISOString(),
+            comment_created_at: createdUnixTime.toISOString(),
+            is_hidden: false,
+            is_deleted: false,
             moderation_status: 'pending',
           })
           .select('id')

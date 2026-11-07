@@ -4,7 +4,7 @@ import { getCurrentAdmin } from '@/lib/auth/session';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { AppShell } from '@/components/layout/app-shell';
 import { LiveCommentsView, CommentViewTab } from '@/components/comments/live-comments-view';
-import { CommentWithDetails } from '@/types/database';
+import { enrichCommentsWithDetails } from '@/lib/comments/enrich-comments';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,14 +22,10 @@ export default async function CommentsPage({ searchParams }: CommentsPageProps) 
 
   const supabase = await createServerSupabaseClient();
 
-  // Fetch comments with page, post, assigned_admin, actions, and notes
   const { data: rawComments, count } = await supabase
     .from('comments')
-    .select(
-      '*, page:facebook_pages(*), post:posts(*), assigned_admin:admin_users!comments_assigned_to_fkey(*), moderation_result:moderation_results(*), actions:moderation_actions(*)',
-      { count: 'exact' }
-    )
-    .order('created_time', { ascending: false })
+    .select('*', { count: 'exact' })
+    .order('comment_created_at', { ascending: false })
     .limit(200);
 
   // Fetch active pages for filter dropdown
@@ -45,7 +41,7 @@ export default async function CommentsPage({ searchParams }: CommentsPageProps) 
     .eq('is_active', true)
     .order('role', { ascending: false });
 
-  const comments = (rawComments || []) as CommentWithDetails[];
+  const comments = await enrichCommentsWithDetails(supabase, rawComments || []);
   const initialTab = (searchParams?.view as CommentViewTab) || 'all';
 
   return (

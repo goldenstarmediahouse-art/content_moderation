@@ -5,6 +5,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { AppShell } from '@/components/layout/app-shell';
 import { QueueView } from '@/components/queue/queue-view';
 import { CommentWithDetails } from '@/types/database';
+import { enrichCommentsWithDetails } from '@/lib/comments/enrich-comments';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,11 +20,9 @@ export default async function QueuePage() {
   // Fetch comments requiring review
   const { data: rawComments } = await supabase
     .from('comments')
-    .select(
-      '*, page:facebook_pages(*), post:posts(*), assigned_admin:admin_users!comments_assigned_to_fkey(*), moderation_result:moderation_results(*), actions:moderation_actions(*)'
-    )
+    .select('*')
     .in('moderation_status', ['review_required', 'pending'])
-    .order('created_time', { ascending: false });
+    .order('comment_created_at', { ascending: false });
 
   const { data: moderators } = await supabase
     .from('admin_users')
@@ -31,7 +30,7 @@ export default async function QueuePage() {
     .eq('is_active', true)
     .order('role', { ascending: false });
 
-  const comments = (rawComments || []) as CommentWithDetails[];
+  const comments: CommentWithDetails[] = await enrichCommentsWithDetails(supabase, rawComments || []);
 
   return (
     <AppShell admin={admin} title="Moderation Decision Queue">

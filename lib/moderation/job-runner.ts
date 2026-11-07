@@ -18,7 +18,7 @@ export async function processModerationJob(jobId: string): Promise<{
   // 1. Fetch the job and lock it to 'processing'
   const { data: job, error: jobError } = await supabase
     .from('moderation_jobs')
-    .select('*, comments(*, facebook_pages(*), posts(*))')
+    .select('*')
     .eq('id', jobId)
     .single();
 
@@ -36,21 +36,30 @@ export async function processModerationJob(jobId: string): Promise<{
     })
     .eq('id', jobId);
 
-  const comment = (job as any).comments;
-  if (!comment) {
+  const { data: comment, error: commentError } = await supabase
+    .from('comments')
+    .select('*')
+    .eq('id', job.comment_id)
+    .maybeSingle();
+
+  if (commentError || !comment) {
     await supabase
-      .from('moderation_jobs')
-      .update({
-        status: 'failed',
-        last_error: 'Associated comment does not exist',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', jobId);
+    .from('moderation_jobs')
+    .update({
+      status: 'failed',
+      last_error: commentError?.message || 'Associated comment does not exist',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', jobId);
     return { success: false, status: 'failed', error: 'Associated comment missing' };
   }
 
-  const page = comment.facebook_pages;
-  const post = comment.posts;
+  const { data: post } = comment.post_id
+    ? await supabase.from('posts').select('*').eq('id', comment.post_id).maybeSingle()
+    : { data: null };
+  const { data: page } = post
+    ? await supabase.from('facebook_pages').select('*').eq('id', post.page_id).maybeSingle()
+    : { data: null };
 
   try {
     // 2. Run AI Moderation Analysis
@@ -107,7 +116,7 @@ export async function processModerationJob(jobId: string): Promise<{
         type: 'threat',
         severity: 'critical',
         comment_id: comment.id,
-        page_id: comment.page_id,
+        page_id: page?.id || null,
         is_read: false,
       });
 
@@ -165,7 +174,7 @@ export async function processModerationJob(jobId: string): Promise<{
                 type: 'integration_error',
                 severity: 'high',
                 comment_id: comment.id,
-                page_id: comment.page_id,
+                page_id: page?.id || null,
               });
             }
           } catch (tokenErr: any) {
@@ -185,7 +194,7 @@ export async function processModerationJob(jobId: string): Promise<{
           type: 'review_required',
           severity: aiResult.severity,
           comment_id: comment.id,
-          page_id: comment.page_id,
+          page_id: page?.id || null,
         });
       }
     } else {
@@ -229,7 +238,7 @@ export async function processModerationJob(jobId: string): Promise<{
         type: 'job_failure',
         severity: 'high',
         comment_id: comment.id,
-        page_id: comment.page_id,
+        page_id: page?.id || null,
       });
     }
 

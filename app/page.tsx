@@ -18,6 +18,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { AppShell } from '@/components/layout/app-shell';
 import { ModerationStatusBadge, EscalationPriorityBadge } from '@/components/ui/badge';
 import { CommentWithDetails, Database } from '@/types/database';
+import { enrichCommentsWithDetails } from '@/lib/comments/enrich-comments';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,35 +43,27 @@ export default async function OverviewPage() {
     supabase.from('comments').select('*', { count: 'exact', head: true }).in('moderation_status', ['pending', 'review_required']),
     supabase.from('comments').select('*', { count: 'exact', head: true }).eq('moderation_status', 'flagged'),
     supabase.from('comments').select('*', { count: 'exact', head: true }).eq('moderation_status', 'hidden'),
-    supabase.from('comments').select('*', { count: 'exact', head: true }).or('is_escalated.eq.true,moderation_status.eq.escalated'),
+    supabase.from('comments').select('*', { count: 'exact', head: true }).eq('moderation_status', 'escalated'),
   ]);
 
   // 2. Fetch Priority Review & Escalated Comments
   const { data: rawPriorityComments } = await supabase
     .from('comments')
-    .select('*, page:facebook_pages(*), post:posts(*), assigned_admin:admin_users!comments_assigned_to_fkey(*), moderation_result:moderation_results(*)')
-    .or('is_escalated.eq.true,moderation_status.eq.review_required,moderation_status.eq.pending')
-    .order('created_time', { ascending: false })
+    .select('*')
+    .in('moderation_status', ['escalated', 'review_required', 'pending'])
+    .order('comment_created_at', { ascending: false })
     .limit(6);
 
-  const priorityComments = (rawPriorityComments || []) as CommentWithDetails[];
+  const priorityComments: CommentWithDetails[] = await enrichCommentsWithDetails(supabase, rawPriorityComments || []);
 
   // 3. Fetch Recent Moderation Activity
   const { data: rawRecentActions } = await supabase
     .from('moderation_actions')
-    .select('*, comments(message, facebook_comment_id, facebook_pages(name))')
+    .select('*')
     .order('created_at', { ascending: false })
     .limit(8);
 
-  const recentActions = (rawRecentActions || []) as Array<
-    Database['public']['Tables']['moderation_actions']['Row'] & {
-      comments: {
-        message: string;
-        facebook_comment_id: string;
-        facebook_pages: { name: string } | null;
-      } | null;
-    }
-  >;
+  const recentActions = (rawRecentActions || []) as Database['public']['Tables']['moderation_actions']['Row'][];
 
   // 4. Fetch Active Moderators and their assigned case counts
   const { data: rawModerators } = await supabase

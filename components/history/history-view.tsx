@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Search, Filter, History, Info, CheckCircle2, AlertCircle } from 'lucide-react';
 import { Database } from '@/types/database';
+import { getFacebookApiResponse } from '@/lib/comments/comment-state';
 
 interface HistoryViewProps {
   initialActions: (Database['public']['Tables']['moderation_actions']['Row'] & {
@@ -144,7 +145,7 @@ export function HistoryView({ initialActions }: HistoryViewProps) {
                     </td>
 
                     <td className="py-3 px-4 text-right whitespace-nowrap">
-                      {item.api_response ? (
+                      {getFacebookApiResponse(item.api_response) != null ? (
                         <button
                           onClick={() => setInspectAction(item)}
                           className="px-2 py-1 rounded bg-charcoal-800 hover:bg-charcoal-700 text-charcoal-300 border border-charcoal-700 text-[11px] font-mono"
@@ -179,7 +180,7 @@ export function HistoryView({ initialActions }: HistoryViewProps) {
               </button>
             </div>
             <pre className="p-4 rounded bg-charcoal-950 border border-charcoal-800 text-charcoal-300 font-mono text-xs overflow-x-auto max-h-72">
-              {JSON.stringify(inspectAction.api_response, null, 2)}
+              {JSON.stringify(getFacebookApiResponse(inspectAction.api_response), null, 2)}
             </pre>
           </div>
         </div>
