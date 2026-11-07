@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
               page_id: pageRecord.id,
               facebook_post_id: postFacebookId,
               message: 'Facebook Post',
-              created_time: createdUnixTime.toISOString(),
+              published_at: createdUnixTime.toISOString(),
             })
             .select('id')
             .single();

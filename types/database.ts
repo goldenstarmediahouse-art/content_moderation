@@ -205,7 +205,8 @@ export type Database = {
           facebook_post_id: string;
           message: string | null;
           permalink_url: string | null;
-          created_time: string | null;
+          published_at: string | null;
+          monitoring_enabled: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -215,7 +216,8 @@ export type Database = {
           facebook_post_id: string;
           message?: string | null;
           permalink_url?: string | null;
-          created_time?: string | null;
+          published_at?: string | null;
+          monitoring_enabled?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -225,7 +227,8 @@ export type Database = {
           facebook_post_id?: string;
           message?: string | null;
           permalink_url?: string | null;
-          created_time?: string | null;
+          published_at?: string | null;
+          monitoring_enabled?: boolean;
           created_at?: string;
           updated_at?: string;
         };

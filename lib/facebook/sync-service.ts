@@ -69,7 +69,7 @@ export async function syncFacebookPageComments(
     // Also check if any posts are already stored locally for this page that might not be in the top 25
     const { data: storedPosts, error: storedPostsErr } = await supabase
       .from('posts')
-      .select('facebook_post_id, message, permalink_url, created_time')
+      .select('facebook_post_id, message, permalink_url, published_at')
       .eq('page_id', pageDbId)
       .limit(50);
 
@@ -85,7 +85,7 @@ export async function syncFacebookPageComments(
             id: sp.facebook_post_id,
             message: sp.message || undefined,
             permalink_url: sp.permalink_url || undefined,
-            created_time: sp.created_time || undefined,
+            created_time: sp.published_at || undefined,
           });
         }
       }
@@ -106,7 +106,7 @@ export async function syncFacebookPageComments(
           facebook_post_id: post.id,
           message: post.message || 'Facebook Post',
           permalink_url: post.permalink_url || null,
-          created_time: post.created_time || new Date().toISOString(),
+          published_at: post.created_time || new Date().toISOString(),
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'facebook_post_id' }
