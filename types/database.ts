@@ -60,6 +60,7 @@ export type ModerationActionType =
 export type ActorType = 'ai' | 'super_admin' | 'moderator' | 'system';
 
 export type NotificationType =
+  | 'info'
   | 'threat'
   | 'review_required'
   | 'integration_error'
@@ -237,13 +238,13 @@ export type Database = {
       comments: {
         Row: {
           id: string;
-          post_id: string | null;
+          post_id: string;
           facebook_comment_id: string;
           parent_facebook_comment_id: string | null;
           commenter_facebook_id: string | null;
           commenter_name: string | null;
           message: string;
-          comment_created_at: string;
+          comment_created_at: string | null;
           comment_updated_at: string | null;
           is_hidden: boolean;
           is_deleted: boolean;
@@ -255,13 +256,13 @@ export type Database = {
         };
         Insert: {
           id?: string;
-          post_id?: string | null;
+          post_id: string;
           facebook_comment_id: string;
           parent_facebook_comment_id?: string | null;
           commenter_facebook_id?: string | null;
           commenter_name?: string | null;
           message: string;
-          comment_created_at: string;
+          comment_created_at?: string | null;
           comment_updated_at?: string | null;
           is_hidden?: boolean;
           is_deleted?: boolean;
@@ -273,13 +274,13 @@ export type Database = {
         };
         Update: {
           id?: string;
-          post_id?: string | null;
+          post_id?: string;
           facebook_comment_id?: string;
           parent_facebook_comment_id?: string | null;
           commenter_facebook_id?: string | null;
           commenter_name?: string | null;
           message?: string;
-          comment_created_at?: string;
+          comment_created_at?: string | null;
           comment_updated_at?: string | null;
           is_hidden?: boolean;
           is_deleted?: boolean;
@@ -288,30 +289,6 @@ export type Database = {
           received_at?: string;
           created_at?: string;
           updated_at?: string;
-        };
-        Relationships: [];
-      };
-      comment_notes: {
-        Row: {
-          id: string;
-          comment_id: string;
-          admin_id: string;
-          note: string;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          comment_id: string;
-          admin_id: string;
-          note: string;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          comment_id?: string;
-          admin_id?: string;
-          note?: string;
-          created_at?: string;
         };
         Relationships: [];
       };
@@ -355,40 +332,40 @@ export type Database = {
         Row: {
           id: string;
           comment_id: string;
-          detected_category: string;
+          category: string;
           confidence_score: number;
           severity: SeverityLevel;
           recommended_action: RecommendedAction;
-          explanation: string;
-          detected_language: string;
-          model_info: string;
-          raw_response: Json | null;
+          explanation: string | null;
+          detected_language: string | null;
+          model_name: string | null;
+          model_version: string | null;
           created_at: string;
         };
         Insert: {
           id?: string;
           comment_id: string;
-          detected_category: string;
+          category: string;
           confidence_score: number;
           severity: SeverityLevel;
           recommended_action: RecommendedAction;
-          explanation: string;
-          detected_language?: string;
-          model_info?: string;
-          raw_response?: Json | null;
+          explanation?: string | null;
+          detected_language?: string | null;
+          model_name?: string | null;
+          model_version?: string | null;
           created_at?: string;
         };
         Update: {
           id?: string;
           comment_id?: string;
-          detected_category?: string;
+          category?: string;
           confidence_score?: number;
           severity?: SeverityLevel;
           recommended_action?: RecommendedAction;
-          explanation?: string;
-          detected_language?: string;
-          model_info?: string;
-          raw_response?: Json | null;
+          explanation?: string | null;
+          detected_language?: string | null;
+          model_name?: string | null;
+          model_version?: string | null;
           created_at?: string;
         };
         Relationships: [];
@@ -433,34 +410,43 @@ export type Database = {
         Row: {
           id: string;
           comment_id: string;
-          action: ModerationActionType;
-          reason: string;
-          actor_type: ActorType;
-          actor_id: string | null;
-          api_response: Json | null;
-          outcome: 'success' | 'failed' | 'pending';
+          moderation_result_id: string | null;
+          performed_by: string | null;
+          action_type: ModerationActionType;
+          action_status: string;
+          reason: string | null;
+          facebook_response: Json | null;
+          error_message: string | null;
+          performed_at: string;
+          completed_at: string | null;
           created_at: string;
         };
         Insert: {
           id?: string;
           comment_id: string;
-          action: ModerationActionType;
-          reason: string;
-          actor_type: ActorType;
-          actor_id?: string | null;
-          api_response?: Json | null;
-          outcome?: 'success' | 'failed' | 'pending';
+          moderation_result_id?: string | null;
+          performed_by?: string | null;
+          action_type: ModerationActionType;
+          action_status: string;
+          reason?: string | null;
+          facebook_response?: Json | null;
+          error_message?: string | null;
+          performed_at: string;
+          completed_at?: string | null;
           created_at?: string;
         };
         Update: {
           id?: string;
           comment_id?: string;
-          action?: ModerationActionType;
-          reason?: string;
-          actor_type?: ActorType;
-          actor_id?: string | null;
-          api_response?: Json | null;
-          outcome?: 'success' | 'failed' | 'pending';
+          moderation_result_id?: string | null;
+          performed_by?: string | null;
+          action_type?: ModerationActionType;
+          action_status?: string;
+          reason?: string | null;
+          facebook_response?: Json | null;
+          error_message?: string | null;
+          performed_at?: string;
+          completed_at?: string | null;
           created_at?: string;
         };
         Relationships: [];
@@ -469,30 +455,33 @@ export type Database = {
         Row: {
           id: string;
           admin_id: string | null;
-          action: string;
-          entity_type: string;
+          event_type: string;
+          description: string | null;
+          entity_type: string | null;
           entity_id: string | null;
-          details: Json | null;
+          metadata: Json | null;
           ip_address: string | null;
           created_at: string;
         };
         Insert: {
           id?: string;
           admin_id?: string | null;
-          action: string;
-          entity_type: string;
+          event_type: string;
+          description?: string | null;
+          entity_type?: string | null;
           entity_id?: string | null;
-          details?: Json | null;
+          metadata?: Json | null;
           ip_address?: string | null;
           created_at?: string;
         };
         Update: {
           id?: string;
           admin_id?: string | null;
-          action?: string;
-          entity_type?: string;
+          event_type?: string;
+          description?: string | null;
+          entity_type?: string | null;
           entity_id?: string | null;
-          details?: Json | null;
+          metadata?: Json | null;
           ip_address?: string | null;
           created_at?: string;
         };
@@ -501,39 +490,30 @@ export type Database = {
       notifications: {
         Row: {
           id: string;
-          admin_id: string | null;
+          admin_id: string;
           title: string;
           message: string;
-          type: NotificationType;
-          severity: SeverityLevel;
-          comment_id: string | null;
-          page_id: string | null;
+          notification_type: string;
+          related_comment_id: string | null;
           is_read: boolean;
-          created_at: string;
         };
         Insert: {
           id?: string;
-          admin_id?: string | null;
+          admin_id: string;
           title: string;
           message: string;
-          type: NotificationType;
-          severity?: SeverityLevel;
-          comment_id?: string | null;
-          page_id?: string | null;
+          notification_type?: string;
+          related_comment_id?: string | null;
           is_read?: boolean;
-          created_at?: string;
         };
         Update: {
           id?: string;
-          admin_id?: string | null;
+          admin_id?: string;
           title?: string;
           message?: string;
-          type?: NotificationType;
-          severity?: SeverityLevel;
-          comment_id?: string | null;
-          page_id?: string | null;
+          notification_type?: string;
+          related_comment_id?: string | null;
           is_read?: boolean;
-          created_at?: string;
         };
         Relationships: [];
       };
@@ -574,10 +554,12 @@ export type CommentWithDetails = Database['public']['Tables']['comments']['Row']
     role: AdminRole;
   } | null;
   moderation_result?: Database['public']['Tables']['moderation_results']['Row'];
-  actions?: (Database['public']['Tables']['moderation_actions']['Row'] & {
+  actions?: Array<Database['public']['Tables']['moderation_actions']['Row'] & {
+    action: ModerationActionType;
+    actor_type: ActorType;
+    actor_id: string | null;
+    outcome: 'success' | 'failed' | 'pending';
+    api_response: Json | null;
     admin?: { full_name: string | null; email: string; role: AdminRole } | null;
-  })[];
-  notes?: (Database['public']['Tables']['comment_notes']['Row'] & {
-    admin?: { full_name: string | null; email: string; role: AdminRole } | null;
-  })[];
+  }>;
 };

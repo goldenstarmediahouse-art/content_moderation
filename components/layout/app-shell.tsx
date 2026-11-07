@@ -32,7 +32,7 @@ export async function AppShell({ admin, title, children }: AppShellProps) {
       .from('notifications')
       .select('*', { count: 'exact', head: true })
       .eq('is_read', false)
-      .or(`admin_id.eq.${admin.id},admin_id.is.null`);
+      .eq('admin_id', admin.id);
 
     unreadNotifications = notifCount || 0;
 
@@ -43,14 +43,14 @@ export async function AppShell({ admin, title, children }: AppShellProps) {
     ] = await Promise.all([
       supabase
         .from('moderation_actions')
-        .select('comment_id, action, actor_id, api_response, created_at')
-        .in('action', ['assigned', 'reassigned', 'claimed', 'released'])
+        .select('comment_id, action_type, performed_by, facebook_response, action_status, reason, created_at')
+        .in('action_type', ['assigned', 'reassigned', 'claimed', 'released'])
         .order('created_at', { ascending: false }),
       supabase
         .from('audit_logs')
-        .select('entity_id, action, details, created_at, admin_id')
+        .select('entity_id, event_type, metadata, created_at, admin_id')
         .eq('entity_type', 'comment')
-        .in('action', ['COMMENT_ASSIGNED', 'COMMENT_REASSIGNED', 'COMMENT_CLAIMED', 'COMMENT_RELEASED'])
+        .in('event_type', ['COMMENT_ASSIGNED', 'COMMENT_REASSIGNED', 'COMMENT_CLAIMED', 'COMMENT_RELEASED'])
         .order('created_at', { ascending: false }),
     ]);
     if (assignmentActionsError) throw assignmentActionsError;

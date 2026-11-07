@@ -151,4 +151,4 @@ OPENAI_MODEL=gpt-4o-mini
 - **Contextual Understanding**: Distinguishes respectful theological discussion, questions about church administration, and prayer requests from attacks, hate speech, or financial scams.
 - **Language Nuance**: Evaluates English, Shona (e.g., distinguishing colloquial expressions from derogatory insults like "mbavha" or tribal abuse), Ndebele, and mixed code-switching.
 - **Safe Defaults**: Automatic hiding is **disabled by default**. Dangerous or uncertain comments are directed to the **Moderation Queue** where human administrators can approve, flag, or hide them.
-- **Auditability**: Every action (whether taken by AI or an administrator) is logged in `moderation_actions` with the actor, reason, timestamp, and Meta Graph API response payload.
+- **Auditability**: Moderation actions are logged in `moderation_actions` with their type, status, administrator (when applicable), reason, timestamp, and Meta Graph API response payload.

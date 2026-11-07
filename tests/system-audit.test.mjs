@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 
 // Setup environment for testing
 process.env.ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -176,20 +177,31 @@ test('Meta Graph API: Page identity query requests only id,name (no category)', 
   assert.equal(mockMetaResponse.category, undefined);
 });
 
-test('Assignments: legacy audit records retain assigned moderator identity', async () => {
+test('Meta Graph API collections use cursor pagination without putting tokens in URLs', async () => {
+  const source = await readFile(new URL('../lib/facebook/graph-api.ts', import.meta.url), 'utf8');
+  assert.match(source, /json\.paging\?\.next/);
+  assert.match(source, /json\.paging\?\.cursors\?\.after/);
+  assert.match(source, /requestUrl\.searchParams\.set\('after', cursor\)/);
+  assert.match(source, /Authorization:\s*`Bearer \$\{pageAccessToken\}`/);
+  assert.doesNotMatch(source, /searchParams\.set\(['"]access_token['"]/);
+});
+
+test('Assignments: audit metadata retains assigned moderator identity', async () => {
   const { resolveCommentAssignments } = await import('../lib/comments/comment-state.ts');
   const assignments = resolveCommentAssignments(
     [{
       comment_id: 'comment-1',
-      action: 'assigned',
-      actor_id: 'super-admin',
-      api_response: { facebook_response: null },
+      action_type: 'assigned',
+      performed_by: 'super-admin',
+      facebook_response: null,
+      action_status: 'success',
+      reason: 'Assigned case',
       created_at: '2026-01-01T10:00:00.000Z',
     }],
     [{
       entity_id: 'comment-1',
-      action: 'COMMENT_ASSIGNED',
-      details: { previous_assignee: null, new_assignee: 'moderator-1' },
+      event_type: 'COMMENT_ASSIGNED',
+      metadata: { previous_assignee: null, new_assignee: 'moderator-1' },
       created_at: '2026-01-01T10:00:01.000Z',
     }]
   );
@@ -202,16 +214,20 @@ test('Assignments: new assignment and reassignment use the latest recorded targe
   const assignments = resolveCommentAssignments([
     {
       comment_id: 'comment-1',
-      action: 'assigned',
-      actor_id: 'super-admin',
-      api_response: { comment_state: { assigned_to: 'moderator-1', assigned_at: '2026-01-01T10:00:00.000Z' } },
+      action_type: 'assigned',
+      performed_by: 'super-admin',
+      facebook_response: { comment_state: { assigned_to: 'moderator-1', assigned_at: '2026-01-01T10:00:00.000Z' } },
+      action_status: 'success',
+      reason: 'Assigned',
       created_at: '2026-01-01T10:00:00.000Z',
     },
     {
       comment_id: 'comment-1',
-      action: 'reassigned',
-      actor_id: 'super-admin',
-      api_response: { comment_state: { assigned_to: 'moderator-2', assigned_at: '2026-01-02T10:00:00.000Z' } },
+      action_type: 'reassigned',
+      performed_by: 'super-admin',
+      facebook_response: { comment_state: { assigned_to: 'moderator-2', assigned_at: '2026-01-02T10:00:00.000Z' } },
+      action_status: 'success',
+      reason: 'Reassigned',
       created_at: '2026-01-02T10:00:00.000Z',
     },
   ], []);
@@ -224,16 +240,20 @@ test('Assignments: released comments are unassigned and unknown history is not t
   const { resolveCommentAssignments, UNKNOWN_ASSIGNEE_ID } = await import('../lib/comments/comment-state.ts');
   const released = resolveCommentAssignments([{
     comment_id: 'released',
-    action: 'released',
-    actor_id: 'moderator-1',
-    api_response: null,
+    action_type: 'released',
+    performed_by: 'moderator-1',
+    facebook_response: null,
+    action_status: 'success',
+    reason: 'Released',
     created_at: '2026-01-03T10:00:00.000Z',
   }], []);
   const unknown = resolveCommentAssignments([{
     comment_id: 'unknown',
-    action: 'reassigned',
-    actor_id: 'super-admin',
-    api_response: { legacy: true },
+    action_type: 'reassigned',
+    performed_by: 'super-admin',
+    facebook_response: { legacy: true },
+    action_status: 'success',
+    reason: 'Reassigned',
     created_at: '2026-01-03T10:00:00.000Z',
   }], []);
 
@@ -254,14 +274,14 @@ test('Assignments: dashboard counts and permissions use resolved historical assi
   const assignments = resolveCommentAssignments([], [
     {
       entity_id: 'legacy-assigned',
-      action: 'COMMENT_ASSIGNED',
-      details: { new_assignee: 'moderator-1' },
+      event_type: 'COMMENT_ASSIGNED',
+      metadata: { new_assignee: 'moderator-1' },
       created_at: '2026-01-01T10:00:00.000Z',
     },
     {
       entity_id: 'legacy-unknown',
-      action: 'COMMENT_REASSIGNED',
-      details: { previous_assignee: 'moderator-1' },
+      event_type: 'COMMENT_REASSIGNED',
+      metadata: { previous_assignee: 'moderator-1' },
       created_at: '2026-01-01T10:00:00.000Z',
     },
   ]);
@@ -283,14 +303,14 @@ test('Escalations: reason and priority survive later resolution actions', async 
   const commentsCurrentStatus = 'approved';
   const details = getEscalationDetails([
     {
-      action: 'approved',
+      action_type: 'approved',
       reason: 'Approved after review',
-      api_response: { facebook_response: null, comment_state: { escalation_reason: null, escalation_priority: null } },
+      facebook_response: { facebook_response: null, comment_state: { escalation_reason: null, escalation_priority: null } },
     },
     {
-      action: 'escalated',
+      action_type: 'escalated',
       reason: 'Needs senior review',
-      api_response: { facebook_response: null, comment_state: { escalation_reason: 'Needs senior review', escalation_priority: 'urgent' } },
+      facebook_response: { facebook_response: null, comment_state: { escalation_reason: 'Needs senior review', escalation_priority: 'urgent' } },
     },
   ]);
 
@@ -301,9 +321,9 @@ test('Escalations: reason and priority survive later resolution actions', async 
 test('Escalations: existing historical action payloads remain readable', async () => {
   const { getEscalationDetails } = await import('../lib/comments/comment-state.ts');
   const details = getEscalationDetails([{
-    action: 'escalated',
+    action_type: 'escalated',
     reason: 'Historical escalation',
-    api_response: null,
+    facebook_response: null,
   }], [{ title: 'CASE ESCALATED: Priority [HIGH]' }]);
 
   assert.deepEqual(details, { reason: 'Historical escalation', priority: 'high' });
@@ -320,12 +340,197 @@ test('Moderation history: legacy raw responses and wrapped Facebook responses ar
   );
   assert.equal(getFacebookApiResponse({ facebook_response: null, comment_state: {} }), null);
   assert.equal(getExternalActionStatus([
-    { action: 'approved', outcome: 'success', api_response: historicalResponse },
-    { action: 'hidden', outcome: 'success', api_response: historicalResponse },
+    { action_type: 'approved', action_status: 'success', facebook_response: historicalResponse },
+    { action_type: 'hidden', action_status: 'success', facebook_response: historicalResponse },
   ]), 'synced_facebook');
   assert.equal(getExternalActionStatus([
-    { action: 'hidden', outcome: 'success', api_response: { note: 'Facebook API sync pending connection.' } },
+    { action_type: 'hidden', action_status: 'success', facebook_response: { note: 'Facebook API sync pending connection.' } },
   ]), 'pending_facebook_sync');
+});
+
+test('Assignment records: new assignment, reassignment, and release use deployed columns', async () => {
+  const { buildAssignmentRecords, resolveCommentAssignments } = await import('../lib/comments/comment-state.ts');
+  const base = {
+    commentId: 'comment-1',
+    adminId: 'admin-1',
+    description: 'Case assignment',
+    reason: 'Queue review',
+    timestamp: '2026-01-01T10:00:00.000Z',
+  };
+  const assigned = buildAssignmentRecords({
+    ...base,
+    actionType: 'assigned',
+    previousAssignee: null,
+    newAssignee: 'moderator-1',
+    assignedAt: base.timestamp,
+  });
+  const reassigned = buildAssignmentRecords({
+    ...base,
+    actionType: 'reassigned',
+    previousAssignee: 'moderator-1',
+    newAssignee: 'moderator-2',
+    assignedAt: '2026-01-02T10:00:00.000Z',
+    timestamp: '2026-01-02T10:00:00.000Z',
+  });
+  const released = buildAssignmentRecords({
+    ...base,
+    actionType: 'released',
+    previousAssignee: 'moderator-2',
+    newAssignee: null,
+    assignedAt: null,
+    timestamp: '2026-01-03T10:00:00.000Z',
+  });
+
+  assert.deepEqual(Object.keys(assigned.action).sort(), [
+    'action_status', 'action_type', 'comment_id', 'completed_at', 'facebook_response', 'performed_at',
+    'performed_by', 'reason',
+  ].sort());
+  assert.deepEqual(assigned.action.facebook_response, {
+    comment_state: { assigned_to: 'moderator-1', assigned_at: base.timestamp },
+  });
+  assert.equal(assigned.audit.event_type, 'COMMENT_ASSIGNED');
+  assert.equal(assigned.audit.metadata.new_assignee, 'moderator-1');
+  assert.equal(reassigned.audit.event_type, 'COMMENT_REASSIGNED');
+  assert.equal(reassigned.audit.metadata.new_assignee, 'moderator-2');
+  assert.equal(released.audit.event_type, 'COMMENT_RELEASED');
+  assert.equal(released.audit.metadata.new_assignee, null);
+
+  const assignments = resolveCommentAssignments([], [
+    { entity_id: 'comment-1', ...assigned.audit, created_at: assigned.audit.created_at || base.timestamp },
+    { entity_id: 'comment-1', ...reassigned.audit, created_at: reassigned.audit.created_at || '2026-01-02T10:00:00.000Z' },
+    { entity_id: 'comment-1', ...released.audit, created_at: released.audit.created_at || '2026-01-03T10:00:00.000Z' },
+  ]);
+  assert.equal(assignments.get('comment-1').assignedTo, null);
+});
+
+test('Moderation records: escalation and resolution preserve reason, priority, and raw Facebook response', async () => {
+  const { buildModerationRecords, getEscalationDetails, getFacebookApiResponse } = await import('../lib/comments/comment-state.ts');
+  const escalation = buildModerationRecords({
+    commentId: 'comment-1',
+    adminId: 'admin-1',
+    actionType: 'escalated',
+    reason: 'Needs senior review',
+    actionStatus: 'success',
+    facebookResponse: null,
+    errorMessage: null,
+    previousStatus: 'pending',
+    newStatus: 'escalated',
+    externalActionStatus: 'none',
+    escalationPriority: 'urgent',
+    isOverride: false,
+    timestamp: '2026-01-01T10:00:00.000Z',
+  });
+  const moderation = buildModerationRecords({
+    commentId: 'comment-1',
+    adminId: 'admin-1',
+    actionType: 'hidden',
+    reason: 'Resolved after review',
+    actionStatus: 'success',
+    facebookResponse: { success: true, comment_id: 'fb-comment-1' },
+    errorMessage: null,
+    previousStatus: 'escalated',
+    newStatus: 'hidden',
+    externalActionStatus: 'synced_facebook',
+    escalationPriority: null,
+    isOverride: false,
+    timestamp: '2026-01-02T10:00:00.000Z',
+  });
+
+  assert.equal(escalation.action.action_type, 'escalated');
+  assert.equal(escalation.audit.metadata.escalation_priority, 'urgent');
+  assert.equal(moderation.action.action_type, 'hidden');
+  assert.deepEqual(getFacebookApiResponse(moderation.action.facebook_response), { success: true, comment_id: 'fb-comment-1' });
+  assert.deepEqual(getEscalationDetails([], [], [escalation.audit]), {
+    reason: 'Needs senior review',
+    priority: 'urgent',
+  });
+});
+
+test('Comments enrichment does not query the unavailable comment_notes table', async () => {
+  const source = await readFile(new URL('../lib/comments/enrich-comments.ts', import.meta.url), 'utf8');
+  const notesRoute = await readFile(new URL('../app/api/comments/notes/route.ts', import.meta.url), 'utf8');
+  const webhook = await readFile(new URL('../app/api/webhooks/facebook/route.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /\.from\(['"]comment_notes['"]\)/);
+  assert.match(notesRoute, /status:\s*501/);
+  assert.match(webhook, /\.in\('status', \['pending', 'processing'\]\)/);
+});
+
+test('Comment enrichment uses the deployed optional escalation-notification relationship', async () => {
+  const source = await readFile(new URL('../lib/comments/enrich-comments.ts', import.meta.url), 'utf8');
+  const notificationTypes = await readFile(new URL('../types/database.ts', import.meta.url), 'utf8');
+  const notificationsPage = await readFile(new URL('../app/notifications/page.tsx', import.meta.url), 'utf8');
+  const notificationTable = notificationTypes.slice(
+    notificationTypes.indexOf('      notifications:'),
+    notificationTypes.indexOf('\n      };', notificationTypes.indexOf('      notifications:'))
+  );
+  const { getEscalationDetails } = await import('../lib/comments/comment-state.ts');
+
+  assert.match(source, /\.select\('related_comment_id, title'\)\.eq\('notification_type', 'escalation'\)\.in\('related_comment_id', commentIds\)/);
+  assert.doesNotMatch(source, /\.from\(['"]notifications['"]\)\.select\(['"][^'"]*\bcomment_id\b/);
+  assert.match(source, /if \(escalationNotificationsError\) \{\s*console\.warn/);
+  assert.match(notificationTable, /notification_type: string/);
+  assert.match(notificationTable, /related_comment_id: string \| null/);
+  assert.match(notificationTable, /admin_id: string;/);
+  assert.doesNotMatch(notificationTable, /\b(type|severity|comment_id|page_id|created_at):/);
+  assert.doesNotMatch(notificationsPage, /\.order\('created_at'/);
+  assert.deepEqual(getEscalationDetails([], [], []), { reason: null, priority: null });
+  assert.deepEqual(
+    getEscalationDetails(
+      [],
+      [{ title: 'CASE ESCALATED: Priority [URGENT]' }],
+      [{ event_type: 'COMMENT_ESCALATED', metadata: {} }]
+    ),
+    { reason: null, priority: 'urgent' }
+  );
+});
+
+test('Moderation-result persistence and types match deployed columns without relying on a unique comment constraint', async () => {
+  const source = await readFile(new URL('../lib/moderation/job-runner.ts', import.meta.url), 'utf8');
+  const types = await readFile(new URL('../types/database.ts', import.meta.url), 'utf8');
+  const resultTypes = types.slice(types.indexOf('moderation_results:'), types.indexOf('moderation_jobs:'));
+
+  assert.match(source, /category: aiResult\.detectedCategory/);
+  assert.match(source, /model_name: aiResult\.modelInfo/);
+  assert.match(source, /existingResult[\s\S]*?\.update\(moderationResult\)/);
+  assert.match(source, /\.insert\(\{\s*comment_id: comment\.id,\s*\.\.\.moderationResult/s);
+  assert.doesNotMatch(source, /detected_category|model_info|raw_response|\.upsert\(/);
+  assert.match(resultTypes, /category: string/);
+  assert.match(resultTypes, /model_name: string \| null/);
+  assert.match(resultTypes, /model_version: string \| null/);
+  assert.doesNotMatch(resultTypes, /detected_category|model_info|raw_response/);
+});
+
+test('Missing OpenAI configuration has an explicit server-side guard before API construction', async () => {
+  const source = await readFile(new URL('../lib/ai/moderator.ts', import.meta.url), 'utf8');
+  const keyGuard = source.indexOf("throw new Error('OPENAI_API_KEY is not configured on the server.')");
+  const clientConstruction = source.indexOf('new OpenAI({ apiKey })');
+  assert.ok(keyGuard >= 0);
+  assert.ok(clientConstruction > keyGuard);
+});
+
+test('Settings page exposes verification-token configuration only, not the token value', async () => {
+  const page = await readFile(new URL('../app/settings/page.tsx', import.meta.url), 'utf8');
+  const component = await readFile(new URL('../components/settings/settings-view.tsx', import.meta.url), 'utf8');
+  assert.match(page, /webhookVerifyTokenConfigured:\s*Boolean\(process\.env\.META_VERIFY_TOKEN\)/);
+  assert.doesNotMatch(page, /webhookVerifyToken:\s*process\.env\.META_VERIFY_TOKEN/);
+  assert.doesNotMatch(component, /envStatus\.webhookVerifyToken\b/);
+});
+
+test('Super-admin endpoints require server-side super-admin authorization', async () => {
+  const pages = await readFile(new URL('../app/api/pages/route.ts', import.meta.url), 'utf8');
+  const admins = await readFile(new URL('../app/api/admins/route.ts', import.meta.url), 'utf8');
+  const rules = await readFile(new URL('../app/api/rules/route.ts', import.meta.url), 'utf8');
+  assert.match(pages, /await requireSuperAdmin\(\)/);
+  assert.match(admins, /await requireSuperAdmin\(\)/);
+  assert.match(rules, /await requireSuperAdmin\(\)/);
+});
+
+test('Assignment partial audit failure does not return a retry-inducing failure response', async () => {
+  const route = await readFile(new URL('../app/api/comments/assign/route.ts', import.meta.url), 'utf8');
+  const state = await readFile(new URL('../lib/comments/comment-state.ts', import.meta.url), 'utf8');
+  assert.match(state, /facebook_response:\s*\{\s*comment_state:/);
+  assert.match(route, /Do not retry this assignment/);
+  assert.match(route, /warnings,/);
 });
 
 test('Repeat comment sync updates content without overwriting moderation decisions', async () => {

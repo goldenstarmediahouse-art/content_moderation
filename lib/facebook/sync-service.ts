@@ -1,14 +1,14 @@
 import { fetchPagePosts, fetchPostComments, FacebookCommentItem, FacebookPostItem } from './graph-api';
-import { getScopedAdminSupabaseClient } from '@/lib/supabase/client-resolver';
 import { processModerationJob } from '@/lib/moderation/job-runner';
 import { buildCommentRefreshPayload } from '@/lib/comments/comment-state';
+import type { createAdminClient } from '@/lib/supabase/admin';
 
 export interface SyncPageCommentsOptions {
   pageDbId: string;
   pageFacebookId: string;
   pageAccessToken: string;
   specificPostId?: string;
-  supabaseClient?: any;
+  supabaseClient: ReturnType<typeof createAdminClient>;
 }
 
 export interface SyncPageCommentsResult {
@@ -33,7 +33,7 @@ export async function syncFacebookPageComments(
   options: SyncPageCommentsOptions
 ): Promise<SyncPageCommentsResult> {
   const { pageDbId, pageFacebookId, pageAccessToken, specificPostId, supabaseClient } = options;
-  const supabase = supabaseClient || await getScopedAdminSupabaseClient();
+  const supabase = supabaseClient;
 
   const result: SyncPageCommentsResult = {
     success: true,
@@ -63,9 +63,8 @@ export async function syncFacebookPageComments(
       console.error(
         `[Facebook Comment Sync] Failed to fetch posts for Page: ${pageFacebookId} | Error: ${postsRes.error}`
       );
-    } else {
-      targetPosts = postsRes.posts;
     }
+    targetPosts = postsRes.posts;
 
     // Also check if any posts are already stored locally for this page that might not be in the top 25
     const { data: storedPosts, error: storedPostsErr } = await supabase
@@ -139,7 +138,6 @@ export async function syncFacebookPageComments(
       result.errors.push(
         `Failed to fetch comments for post ${post.id}: ${commentsRes.error || 'Unknown error'}`
       );
-      continue;
     }
 
     // 4. Upsert each comment into 'comments' table

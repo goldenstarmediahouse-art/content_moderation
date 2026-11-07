@@ -176,6 +176,80 @@ export interface FetchPostsResult {
   errorCode?: number | string;
 }
 
+async function fetchGraphCollection(
+  endpointPath: string,
+  pageAccessToken: string,
+  resourceLabel: string
+): Promise<{
+  success: boolean;
+  records: any[];
+  httpStatus?: number;
+  error?: string;
+  errorCode?: number | string;
+}> {
+  const records: any[] = [];
+  const baseUrl = new URL(`${GRAPH_API_BASE}${endpointPath}`);
+  const seenCursors = new Set<string>();
+  let requestUrl = new URL(baseUrl);
+  let httpStatus: number | undefined;
+
+  try {
+    while (true) {
+      const response = await fetch(requestUrl, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${pageAccessToken}`,
+        },
+      });
+      httpStatus = response.status;
+      const json = await response.json();
+
+      if (!response.ok || json.error) {
+        const err = json.error as FacebookGraphError;
+        const errorCode = err?.code ?? response.status;
+        const error = sanitizeMetaError(
+          err?.message || `Failed to fetch ${resourceLabel} from Meta.`,
+          pageAccessToken,
+          process.env.META_APP_ID,
+          process.env.META_APP_SECRET
+        );
+        console.error(
+          `[Facebook Graph API Error] ${resourceLabel} | HTTP Status: ${response.status} | Code: ${errorCode} | Error: ${error}`
+        );
+        return { success: false, records, httpStatus, errorCode, error };
+      }
+
+      if (Array.isArray(json.data)) records.push(...json.data);
+      if (!json.paging?.next) {
+        return { success: true, records, httpStatus };
+      }
+
+      const cursor = json.paging?.cursors?.after;
+      if (typeof cursor !== 'string' || cursor.length === 0 || seenCursors.has(cursor)) {
+        return {
+          success: false,
+          records,
+          httpStatus,
+          error: `Meta returned an invalid or repeated pagination cursor for ${resourceLabel}.`,
+        };
+      }
+
+      seenCursors.add(cursor);
+      requestUrl = new URL(baseUrl);
+      requestUrl.searchParams.set('after', cursor);
+    }
+  } catch (err: any) {
+    const error = sanitizeMetaError(
+      `Network failure while fetching ${resourceLabel}: ${err.message}`,
+      pageAccessToken,
+      process.env.META_APP_ID,
+      process.env.META_APP_SECRET
+    );
+    console.error(`[Facebook Graph API Error] ${resourceLabel} | Network Error: ${error}`);
+    return { success: false, records, httpStatus, error };
+  }
+}
+
 /**
  * Fetches comments for a specific Facebook Post via Graph API.
  * Endpoint: GET /{POST_ID}/comments?fields=id,message,created_time,from
@@ -197,76 +271,24 @@ export async function fetchPostComments(
   pageAccessToken = tokenValidation.token;
 
   const endpointPath = `/${encodeURIComponent(postId)}/comments?fields=id,message,created_time,from&limit=${limit}`;
-  const url = `${GRAPH_API_BASE}${endpointPath}`;
-
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${pageAccessToken}`,
-      },
-    });
-
-    const json = await response.json();
-
-    if (!response.ok || json.error) {
-      const err = json.error as FacebookGraphError;
-      const errorCode = err?.code ?? response.status;
-      const safeError = sanitizeMetaError(
-        err?.message || 'Failed to fetch comments for post.',
-        pageAccessToken,
-        process.env.META_APP_ID,
-        process.env.META_APP_SECRET
-      );
-
-      console.error(
-        `[Facebook Graph API Error] Post ID: ${postId} | Endpoint: /${postId}/comments | HTTP Status: ${response.status} | Code: ${errorCode} | Error: ${safeError}`
-      );
-
-      return {
-        success: false,
-        comments: [],
-        httpStatus: response.status,
-        errorCode,
-        error: safeError,
-      };
-    }
-
-    const rawComments = Array.isArray(json.data) ? json.data : [];
-    const comments: FacebookCommentItem[] = rawComments.map((item: any) => ({
+  const collection = await fetchGraphCollection(endpointPath, pageAccessToken, `comments for post ${postId}`);
+  const comments: FacebookCommentItem[] = collection.records.map((item: any) => ({
       id: String(item.id),
       message: String(item.message || ''),
       created_time: item.created_time || new Date().toISOString(),
       from: item.from ? { id: item.from.id, name: item.from.name } : undefined,
     }));
 
-    console.log(
-      `[Facebook Graph API] Fetching comments | Post ID: ${postId} | Endpoint: /${postId}/comments?fields=id,message,created_time,from | HTTP Status: ${response.status} | Comments: ${comments.length}`
-    );
-
-    return {
-      success: true,
-      comments,
-      httpStatus: response.status,
-    };
-  } catch (err: any) {
-    const safeError = sanitizeMetaError(
-      `Network failure while fetching comments: ${err.message}`,
-      pageAccessToken,
-      process.env.META_APP_ID,
-      process.env.META_APP_SECRET
-    );
-
-    console.error(
-      `[Facebook Graph API Error] Post ID: ${postId} | Endpoint: /${postId}/comments | Network Error: ${safeError}`
-    );
-
-    return {
-      success: false,
-      comments: [],
-      error: safeError,
-    };
-  }
+  console.log(
+    `[Facebook Graph API] Fetching comments | Post ID: ${postId} | HTTP Status: ${collection.httpStatus || 'unavailable'} | Comments: ${comments.length}`
+  );
+  return {
+    success: collection.success,
+    comments,
+    httpStatus: collection.httpStatus,
+    error: collection.error,
+    errorCode: collection.errorCode,
+  };
 }
 
 /**
@@ -290,76 +312,24 @@ export async function fetchPagePosts(
   pageAccessToken = tokenValidation.token;
 
   const endpointPath = `/${encodeURIComponent(pageId)}/posts?fields=id,message,created_time,permalink_url&limit=${limit}`;
-  const url = `${GRAPH_API_BASE}${endpointPath}`;
-
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${pageAccessToken}`,
-      },
-    });
-
-    const json = await response.json();
-
-    if (!response.ok || json.error) {
-      const err = json.error as FacebookGraphError;
-      const errorCode = err?.code ?? response.status;
-      const safeError = sanitizeMetaError(
-        err?.message || 'Failed to fetch posts for Page.',
-        pageAccessToken,
-        process.env.META_APP_ID,
-        process.env.META_APP_SECRET
-      );
-
-      console.error(
-        `[Facebook Graph API Error] Page ID: ${pageId} | Endpoint: /${pageId}/posts | HTTP Status: ${response.status} | Code: ${errorCode} | Error: ${safeError}`
-      );
-
-      return {
-        success: false,
-        posts: [],
-        httpStatus: response.status,
-        errorCode,
-        error: safeError,
-      };
-    }
-
-    const rawPosts = Array.isArray(json.data) ? json.data : [];
-    const posts: FacebookPostItem[] = rawPosts.map((item: any) => ({
+  const collection = await fetchGraphCollection(endpointPath, pageAccessToken, `posts for Page ${pageId}`);
+  const posts: FacebookPostItem[] = collection.records.map((item: any) => ({
       id: String(item.id),
       message: item.message,
       created_time: item.created_time,
       permalink_url: item.permalink_url,
     }));
 
-    console.log(
-      `[Facebook Graph API] Fetching posts | Page ID: ${pageId} | Endpoint: /${pageId}/posts | HTTP Status: ${response.status} | Posts: ${posts.length}`
-    );
-
-    return {
-      success: true,
-      posts,
-      httpStatus: response.status,
-    };
-  } catch (err: any) {
-    const safeError = sanitizeMetaError(
-      `Network failure while fetching posts: ${err.message}`,
-      pageAccessToken,
-      process.env.META_APP_ID,
-      process.env.META_APP_SECRET
-    );
-
-    console.error(
-      `[Facebook Graph API Error] Page ID: ${pageId} | Endpoint: /${pageId}/posts | Network Error: ${safeError}`
-    );
-
-    return {
-      success: false,
-      posts: [],
-      error: safeError,
-    };
-  }
+  console.log(
+    `[Facebook Graph API] Fetching posts | Page ID: ${pageId} | HTTP Status: ${collection.httpStatus || 'unavailable'} | Posts: ${posts.length}`
+  );
+  return {
+    success: collection.success,
+    posts,
+    httpStatus: collection.httpStatus,
+    error: collection.error,
+    errorCode: collection.errorCode,
+  };
 }
 
 /**

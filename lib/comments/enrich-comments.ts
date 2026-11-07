@@ -8,7 +8,9 @@ import {
   getCommentState,
   getExternalActionStatus,
   getEscalationDetails,
+  getModerationActionPresentation,
   resolveCommentAssignments,
+  UNKNOWN_ASSIGNEE_ID,
 } from './comment-state';
 
 type CommentRow = Database['public']['Tables']['comments']['Row'];
@@ -37,44 +39,49 @@ export async function enrichCommentsWithDetails(
     { data: actions, error: actionsError },
     { data: auditRecords, error: auditError },
     { data: results, error: resultsError },
-    { data: notes, error: notesError },
     { data: escalationNotifications, error: escalationNotificationsError },
   ] = await Promise.all([
     supabase.from('moderation_actions').select('*').in('comment_id', commentIds).order('created_at', { ascending: false }),
-    supabase.from('audit_logs').select('entity_id, action, details, created_at, admin_id').eq('entity_type', 'comment').in('entity_id', commentIds).in('action', ['COMMENT_ASSIGNED', 'COMMENT_REASSIGNED', 'COMMENT_CLAIMED', 'COMMENT_RELEASED']).order('created_at', { ascending: false }),
-    supabase.from('moderation_results').select('*').in('comment_id', commentIds),
-    supabase.from('comment_notes').select('*').in('comment_id', commentIds).order('created_at', { ascending: false }),
-    supabase.from('notifications').select('comment_id, title').eq('type', 'escalation').in('comment_id', commentIds),
+    supabase.from('audit_logs').select('entity_id, event_type, metadata, created_at, admin_id').eq('entity_type', 'comment').in('entity_id', commentIds).in('event_type', ['COMMENT_ASSIGNED', 'COMMENT_REASSIGNED', 'COMMENT_CLAIMED', 'COMMENT_RELEASED', 'COMMENT_ESCALATED', 'COMMENT_HIDDEN', 'COMMENT_RESTORED', 'COMMENT_DELETED', 'COMMENT_OVERRIDE']).order('created_at', { ascending: false }),
+    supabase.from('moderation_results').select('*').in('comment_id', commentIds).order('created_at', { ascending: false }),
+    supabase.from('notifications').select('related_comment_id, title').eq('notification_type', 'escalation').in('related_comment_id', commentIds),
   ]);
 
   if (actionsError) throw new Error(`Failed to load comment actions: ${actionsError.message}`);
   if (auditError) throw new Error(`Failed to load comment assignment history: ${auditError.message}`);
   if (resultsError) throw new Error(`Failed to load moderation results: ${resultsError.message}`);
-  if (notesError) throw new Error(`Failed to load comment notes: ${notesError.message}`);
-  if (escalationNotificationsError) throw new Error(`Failed to load escalation notifications: ${escalationNotificationsError.message}`);
+  if (escalationNotificationsError) {
+    console.warn(`Escalation notification enrichment is unavailable: ${escalationNotificationsError.message}`);
+  }
 
   const actionRows = (actions || []) as ActionRow[];
-  const assignmentByComment = resolveCommentAssignments(actionRows, auditRecords || []);
+  const typedAuditRecords = (auditRecords || []) as Database['public']['Tables']['audit_logs']['Row'][];
+  const assignmentByComment = resolveCommentAssignments(actionRows, typedAuditRecords);
+  const auditsByComment = new Map<string, Array<{ event_type: string; metadata: unknown }>>();
+  for (const audit of typedAuditRecords) {
+    if (!audit.entity_id) continue;
+    const commentAudits = auditsByComment.get(audit.entity_id) || [];
+    commentAudits.push({ event_type: audit.event_type, metadata: audit.metadata });
+    auditsByComment.set(audit.entity_id, commentAudits);
+  }
   const resultRows = (results || []) as Database['public']['Tables']['moderation_results']['Row'][];
-  const noteRows = (notes || []) as Database['public']['Tables']['comment_notes']['Row'][];
   const escalationNotificationRows = (escalationNotifications || []) as Pick<
     Database['public']['Tables']['notifications']['Row'],
-    'comment_id' | 'title'
+    'related_comment_id' | 'title'
   >[];
   const escalationNotificationsByComment = new Map<string, Array<{ title: string }>>();
   for (const notification of escalationNotificationRows) {
-    if (!notification.comment_id) continue;
-    const existing = escalationNotificationsByComment.get(notification.comment_id) || [];
+    if (!notification.related_comment_id) continue;
+    const existing = escalationNotificationsByComment.get(notification.related_comment_id) || [];
     existing.push({ title: notification.title });
-    escalationNotificationsByComment.set(notification.comment_id, existing);
+    escalationNotificationsByComment.set(notification.related_comment_id, existing);
   }
 
   const pageIds = Array.from(new Set(postRows.map((post) => post.page_id)));
-  const actionAdminIds = Array.from(new Set(actionRows.flatMap((action) => action.actor_id ? [action.actor_id] : [])));
+  const actionAdminIds = Array.from(new Set(actionRows.flatMap((action) => action.performed_by ? [action.performed_by] : [])));
   const assignedIds = Array.from(new Set(Array.from(assignmentByComment.values())
-    .flatMap((assignment) => assignment.assignedTo ? [assignment.assignedTo] : [])));
-  const noteAdminIds = Array.from(new Set(noteRows.map((note) => note.admin_id)));
-  const adminIds = Array.from(new Set([...actionAdminIds, ...assignedIds, ...noteAdminIds]));
+    .flatMap((assignment) => assignment.assignedTo && assignment.assignedTo !== UNKNOWN_ASSIGNEE_ID ? [assignment.assignedTo] : [])));
+  const adminIds = Array.from(new Set([...actionAdminIds, ...assignedIds]));
 
   let pageRows: Database['public']['Tables']['facebook_pages']['Row'][] = [];
   if (pageIds.length > 0) {
@@ -100,39 +107,41 @@ export async function enrichCommentsWithDetails(
   const pageById = new Map(pageRows.map((page) => [page.id, page]));
   const adminById = new Map(adminRows.map((admin) => [admin.id, admin]));
   const actionsByComment = new Map<string, ActionRow[]>();
-  const resultByComment = new Map(resultRows.map((result) => [result.comment_id, result]));
-  const notesByComment = new Map<string, Database['public']['Tables']['comment_notes']['Row'][]>();
+  const resultByComment = new Map<string, Database['public']['Tables']['moderation_results']['Row']>();
+  for (const result of resultRows) {
+    if (!resultByComment.has(result.comment_id)) {
+      resultByComment.set(result.comment_id, result);
+    }
+  }
 
   for (const action of actionRows) {
     const existing = actionsByComment.get(action.comment_id) || [];
     existing.push(action);
     actionsByComment.set(action.comment_id, existing);
   }
-  for (const note of noteRows) {
-    const existing = notesByComment.get(note.comment_id) || [];
-    existing.push(note);
-    notesByComment.set(note.comment_id, existing);
-  }
-
   return comments.map((comment) => {
     const post = comment.post_id ? postById.get(comment.post_id) : undefined;
     const page = post ? pageById.get(post.page_id) : undefined;
     const commentActions = actionsByComment.get(comment.id) || [];
     const assignment = assignmentByComment.get(comment.id);
+    const commentAudits = auditsByComment.get(comment.id) || [];
     const escalation = getEscalationDetails(
-      commentActions,
-      escalationNotificationsByComment.get(comment.id) || []
+      commentActions.map((action) => ({
+        ...action,
+        ...getModerationActionPresentation(action),
+      })),
+      escalationNotificationsByComment.get(comment.id) || [],
+      commentAudits
     );
     const assignedTo = assignment?.assignedTo || null;
-    const externalActionStatus = getExternalActionStatus(commentActions);
-    const commentNotes = notesByComment.get(comment.id) || [];
+    const externalActionStatus = getExternalActionStatus(commentActions, commentAudits);
 
     return {
       ...comment,
       page_id: post?.page_id || null,
       facebook_post_id: post?.facebook_post_id || null,
       parent_comment_id: comment.parent_facebook_comment_id,
-      created_time: comment.comment_created_at,
+      created_time: comment.comment_created_at || comment.received_at,
       assigned_to: assignedTo,
       assigned_at: assignment?.assignedAt || null,
       is_escalated: comment.moderation_status === 'escalated',
@@ -150,11 +159,11 @@ export async function enrichCommentsWithDetails(
       moderation_result: resultByComment.get(comment.id),
       actions: commentActions.map((action) => ({
         ...action,
-        admin: action.actor_id ? adminById.get(action.actor_id) || null : null,
-      })),
-      notes: commentNotes.map((note) => ({
-        ...note,
-        admin: adminById.get(note.admin_id) || null,
+        ...getModerationActionPresentation(action),
+        actor_type: action.performed_by
+          ? adminById.get(action.performed_by)?.role || 'moderator'
+          : 'system',
+        admin: action.performed_by ? adminById.get(action.performed_by) || null : null,
       })),
     };
   });

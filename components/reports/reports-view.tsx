@@ -20,9 +20,7 @@ export type TimeframePeriod = 'daily' | 'weekly' | 'monthly' | 'all';
 
 interface ReportsViewProps {
   comments: CommentWithDetails[];
-  actions: (Database['public']['Tables']['moderation_actions']['Row'] & {
-    actor?: { full_name: string | null; email: string; role: string } | null;
-  })[];
+  actions: Database['public']['Tables']['moderation_actions']['Row'][];
   moderators: Database['public']['Tables']['admin_users']['Row'][];
 }
 
@@ -47,7 +45,7 @@ export function ReportsView({ comments, actions, moderators }: ReportsViewProps)
   // Exact calculations
   const totalReceived = periodComments.length;
   const totalReviewed = periodActions.filter((a) =>
-    ['approved', 'hidden', 'restored', 'flagged', 'escalated', 'deleted', 'overridden'].includes(a.action)
+    ['approved', 'hidden', 'restored', 'flagged', 'escalated', 'deleted', 'overridden'].includes(a.action_type)
   ).length;
 
   const totalApproved = periodComments.filter((c) => c.moderation_status === 'approved').length;
@@ -67,11 +65,11 @@ export function ReportsView({ comments, actions, moderators }: ReportsViewProps)
     ).length;
 
     // Decisions taken by this moderator in the period
-    const modActions = periodActions.filter((a) => a.actor_id === mod.id);
-    const approvedCount = modActions.filter((a) => a.action === 'approved').length;
-    const flaggedCount = modActions.filter((a) => a.action === 'flagged').length;
-    const hiddenCount = modActions.filter((a) => a.action === 'hidden').length;
-    const escalatedCount = modActions.filter((a) => a.action === 'escalated').length;
+    const modActions = periodActions.filter((a) => a.performed_by === mod.id);
+    const approvedCount = modActions.filter((a) => a.action_type === 'approved').length;
+    const flaggedCount = modActions.filter((a) => a.action_type === 'flagged').length;
+    const hiddenCount = modActions.filter((a) => a.action_type === 'hidden').length;
+    const escalatedCount = modActions.filter((a) => a.action_type === 'escalated').length;
     const totalHandled = modActions.length;
 
     // Calculate average review time where comment assigned_at is available

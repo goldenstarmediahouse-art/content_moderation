@@ -306,10 +306,10 @@ export default async function OverviewPage() {
                     <div className="space-y-0.5 max-w-sm sm:max-w-md">
                       <div className="flex items-center space-x-2">
                         <span className="font-semibold text-charcoal-200 uppercase tracking-wide text-[11px]">
-                          {act.action}
+                          {act.action_type}
                         </span>
                         <span className="text-charcoal-500 text-[11px]">
-                          by <span className="font-mono text-charcoal-300">{act.actor_type}</span>
+                          by <span className="font-mono text-charcoal-300">{act.performed_by ? moderators.find((moderator) => moderator.id === act.performed_by)?.role || 'moderator' : /auto-|by ai|detected by ai/i.test(act.reason || '') ? 'ai' : 'system'}</span>
                         </span>
                       </div>
                       <p className="text-charcoal-400 text-[11px] truncate">

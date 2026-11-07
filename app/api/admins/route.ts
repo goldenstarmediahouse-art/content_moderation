@@ -51,10 +51,11 @@ export async function POST(request: NextRequest) {
 
       await supabase.from('audit_logs').insert({
         admin_id: admin.id,
-        action: assignedRole === 'super_admin' ? 'CREATE_SUPER_ADMIN_ACCOUNT' : 'CREATE_MODERATOR_ACCOUNT',
+        event_type: assignedRole === 'super_admin' ? 'CREATE_SUPER_ADMIN_ACCOUNT' : 'CREATE_MODERATOR_ACCOUNT',
+        description: `Created ${assignedRole === 'super_admin' ? 'Super Admin' : 'Moderator'} account`,
         entity_type: 'admin_users',
         entity_id: adminRecord.id,
-        details: { email, full_name, role: assignedRole },
+        metadata: { email, full_name, role: assignedRole },
       });
 
       return NextResponse.json({ success: true, user: adminRecord });
@@ -86,10 +87,11 @@ export async function POST(request: NextRequest) {
 
       await supabase.from('audit_logs').insert({
         admin_id: admin.id,
-        action: `ADMIN_STATUS_${is_active ? 'ACTIVATED' : 'DEACTIVATED'}`,
+        event_type: `ADMIN_STATUS_${is_active ? 'ACTIVATED' : 'DEACTIVATED'}`,
+        description: `${is_active ? 'Activated' : 'Deactivated'} admin account`,
         entity_type: 'admin_users',
         entity_id: targetAdminId,
-        details: { is_active },
+        metadata: { is_active },
       });
 
       return NextResponse.json({ success: true, admin: updated });

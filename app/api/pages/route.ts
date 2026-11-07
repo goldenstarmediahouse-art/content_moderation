@@ -294,10 +294,11 @@ export async function POST(request: NextRequest) {
       // Audit log
       await supabase.from('audit_logs').insert({
         admin_id: admin.id,
-        action: 'CONNECT_FACEBOOK_PAGE',
+        event_type: 'CONNECT_FACEBOOK_PAGE',
+        description: 'Connected Facebook Page',
         entity_type: 'facebook_pages',
         entity_id: pageRecord.id,
-        details: {
+        metadata: {
           pageId: targetPageId,
           name: targetName,
           webhookSubscribed: webhookResult.confirmed && !webhookResult.persistenceError,
@@ -373,10 +374,11 @@ export async function POST(request: NextRequest) {
 
       await supabase.from('audit_logs').insert({
         admin_id: admin.id,
-        action: 'RETRY_FACEBOOK_PAGE_WEBHOOK_SUBSCRIPTION',
+        event_type: 'RETRY_FACEBOOK_PAGE_WEBHOOK_SUBSCRIPTION',
+        description: 'Retried Facebook Page webhook subscription',
         entity_type: 'facebook_pages',
         entity_id: page.id,
-        details: {
+        metadata: {
           pageId: page.page_id,
           name: page.name,
           webhookSubscribed: webhookResult.confirmed && !webhookResult.persistenceError,
@@ -445,10 +447,11 @@ export async function POST(request: NextRequest) {
 
       await supabase.from('audit_logs').insert({
         admin_id: admin.id,
-        action: `UPDATE_PAGE_${setting.toUpperCase()}`,
+        event_type: `UPDATE_PAGE_${setting.toUpperCase()}`,
+        description: `Updated Facebook Page setting: ${setting}`,
         entity_type: 'facebook_pages',
         entity_id: pageDbId,
-        details: { setting, newValue: Boolean(value) },
+        metadata: { setting, newValue: Boolean(value) },
       });
 
       return NextResponse.json({ success: true, page: updated });
@@ -472,10 +475,11 @@ export async function POST(request: NextRequest) {
 
       await supabase.from('audit_logs').insert({
         admin_id: admin.id,
-        action: 'DISCONNECT_FACEBOOK_PAGE',
+        event_type: 'DISCONNECT_FACEBOOK_PAGE',
+        description: 'Disconnected Facebook Page',
         entity_type: 'facebook_pages',
         entity_id: pageDbId,
-        details: { pageDbId },
+        metadata: { pageDbId },
       });
 
       return NextResponse.json({ success: true, pageDbId });

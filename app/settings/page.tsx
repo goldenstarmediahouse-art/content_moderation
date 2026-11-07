@@ -19,7 +19,6 @@ export default async function SettingsPage() {
   const encryptionKey = process.env.ENCRYPTION_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const verifyToken = process.env.META_VERIFY_TOKEN || 'church_moderation_webhook_token';
 
   const envStatus = {
     supabaseConfigured: Boolean(supabaseUrl && anonKey && !supabaseUrl.includes('placeholder')),
@@ -28,7 +27,7 @@ export default async function SettingsPage() {
     encryptionConfigured: Boolean(encryptionKey && encryptionKey.length >= 32),
     openaiConfigured: Boolean(openaiKey),
     appUrl,
-    webhookVerifyToken: verifyToken,
+    webhookVerifyTokenConfigured: Boolean(process.env.META_VERIFY_TOKEN),
   };
 
   return (

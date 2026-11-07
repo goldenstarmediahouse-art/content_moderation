@@ -2,17 +2,20 @@
 
 import React, { useState } from 'react';
 import { Search, Filter, History, Info, CheckCircle2, AlertCircle } from 'lucide-react';
-import { Database } from '@/types/database';
-import { getFacebookApiResponse } from '@/lib/comments/comment-state';
+import { ActorType, Database } from '@/types/database';
+import { getFacebookApiResponse, getModerationActionPresentation } from '@/lib/comments/comment-state';
 
-interface HistoryViewProps {
-  initialActions: (Database['public']['Tables']['moderation_actions']['Row'] & {
+type HistoryAction = Database['public']['Tables']['moderation_actions']['Row'] &
+  ReturnType<typeof getModerationActionPresentation> & {
+    actor_type: ActorType;
     comments: {
       message: string;
       commenter_name: string | null;
       facebook_pages: { name: string } | null;
     } | null;
-  })[];
+  };
+interface HistoryViewProps {
+  initialActions: HistoryAction[];
 }
 
 export function HistoryView({ initialActions }: HistoryViewProps) {
@@ -23,7 +26,7 @@ export function HistoryView({ initialActions }: HistoryViewProps) {
 
   const filtered = initialActions.filter((act) => {
     if (searchTerm) {
-      const matchReason = act.reason.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchReason = act.reason?.toLowerCase().includes(searchTerm.toLowerCase()) || false;
       const matchComment = act.comments?.message.toLowerCase().includes(searchTerm.toLowerCase()) || false;
       const matchCommenter = act.comments?.commenter_name?.toLowerCase().includes(searchTerm.toLowerCase()) || false;
       if (!matchReason && !matchComment && !matchCommenter) return false;

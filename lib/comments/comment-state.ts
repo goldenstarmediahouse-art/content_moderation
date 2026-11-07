@@ -1,4 +1,5 @@
 import type { createAdminClient } from '@/lib/supabase/admin';
+import type { Database, Json, ModerationActionType } from '@/types/database';
 
 export const UNKNOWN_ASSIGNEE_ID = '__historical_assignee_unknown__';
 
@@ -7,18 +8,108 @@ type AssignmentClient = ReturnType<typeof createAdminClient>;
 
 export interface AssignmentActionRecord {
   comment_id: string;
-  action: string;
-  actor_id: string | null;
-  api_response: unknown;
+  action_type: string;
+  performed_by: string | null;
+  facebook_response: unknown;
+  action_status: string;
+  reason: string | null;
   created_at: string;
 }
 
 export interface AssignmentAuditRecord {
   entity_id: string | null;
-  action: string;
-  details: unknown;
+  event_type: string;
+  metadata: unknown;
   created_at: string;
   admin_id?: string | null;
+}
+
+export function buildAssignmentRecords(input: {
+  commentId: string;
+  actionType: 'assigned' | 'reassigned' | 'claimed' | 'released';
+  adminId: string;
+  description: string;
+  reason: string | null;
+  previousAssignee: string | null;
+  newAssignee: string | null;
+  assignedAt: string | null;
+  timestamp: string;
+}) {
+  return {
+    action: {
+      comment_id: input.commentId,
+      action_type: input.actionType,
+      reason: input.reason ? `${input.description} (${input.reason})` : input.description,
+      performed_by: input.adminId,
+      action_status: 'success',
+      performed_at: input.timestamp,
+      completed_at: input.timestamp,
+      facebook_response: {
+        comment_state: {
+          assigned_to: input.newAssignee,
+          assigned_at: input.assignedAt,
+        },
+      },
+    } satisfies Database['public']['Tables']['moderation_actions']['Insert'],
+    audit: {
+      admin_id: input.adminId,
+      event_type: `COMMENT_${input.actionType.toUpperCase()}`,
+      description: input.description,
+      entity_type: 'comment',
+      entity_id: input.commentId,
+      metadata: {
+        previous_assignee: input.previousAssignee,
+        new_assignee: input.newAssignee,
+        assigned_at: input.assignedAt,
+        reason: input.reason,
+      },
+    } satisfies Database['public']['Tables']['audit_logs']['Insert'],
+  };
+}
+
+export function buildModerationRecords(input: {
+  commentId: string;
+  adminId: string;
+  actionType: Database['public']['Tables']['moderation_actions']['Insert']['action_type'];
+  reason: string;
+  actionStatus: string;
+  facebookResponse: unknown;
+  errorMessage: string | null;
+  previousStatus: string;
+  newStatus: string;
+  externalActionStatus: string;
+  escalationPriority: string | null;
+  isOverride: boolean;
+  timestamp: string;
+}) {
+  return {
+    action: {
+      comment_id: input.commentId,
+      action_type: input.actionType,
+      reason: input.reason,
+      performed_by: input.adminId,
+      action_status: input.actionStatus,
+      facebook_response: input.facebookResponse as Json | null,
+      error_message: input.errorMessage,
+      performed_at: input.timestamp,
+      completed_at: input.timestamp,
+    } satisfies Database['public']['Tables']['moderation_actions']['Insert'],
+    audit: {
+      admin_id: input.adminId,
+      event_type: input.isOverride ? 'COMMENT_OVERRIDE' : `COMMENT_${input.actionType.toUpperCase()}`,
+      description: input.reason,
+      entity_type: 'comment',
+      entity_id: input.commentId,
+      metadata: {
+        previous_status: input.previousStatus,
+        new_status: input.newStatus,
+        reason: input.reason,
+        external_action_status: input.externalActionStatus,
+        outcome: input.actionStatus,
+        ...(input.escalationPriority ? { escalation_priority: input.escalationPriority } : {}),
+      },
+    } satisfies Database['public']['Tables']['audit_logs']['Insert'],
+  };
 }
 
 export interface CommentAssignment {
@@ -82,12 +173,12 @@ export function getFacebookApiResponse(apiResponse: unknown): unknown {
 }
 
 export function getExternalActionStatus(actions: Array<{
-  action: string;
-  outcome: string;
-  api_response: unknown;
-}>): 'none' | 'pending_facebook_sync' | 'synced_facebook' | 'failed_facebook' {
+  action_type: string;
+  action_status: string;
+  facebook_response: unknown;
+}>, auditRecords: Array<{ event_type: string; metadata: unknown }> = []): 'none' | 'pending_facebook_sync' | 'synced_facebook' | 'failed_facebook' {
   for (const action of actions) {
-    const storedStatus = getCommentState(action.api_response).external_action_status;
+    const storedStatus = getCommentState(action.facebook_response).external_action_status;
     if (
       storedStatus === 'pending_facebook_sync' ||
       storedStatus === 'synced_facebook' ||
@@ -96,17 +187,45 @@ export function getExternalActionStatus(actions: Array<{
       return storedStatus;
     }
 
-    if (!['hidden', 'restored', 'deleted'].includes(action.action)) continue;
-    if (action.action === 'deleted') return 'pending_facebook_sync';
+    if (!['hidden', 'restored', 'deleted'].includes(action.action_type)) continue;
+    if (action.action_type === 'deleted') return 'pending_facebook_sync';
 
-    const response = asRecord(getFacebookApiResponse(action.api_response));
+    const response = asRecord(action.facebook_response);
     const note = typeof response?.note === 'string' ? response.note.toLowerCase() : '';
     if (note.includes('pending')) return 'pending_facebook_sync';
-    if (action.outcome === 'failed' || response?.success === false) return 'failed_facebook';
+    if (action.action_status === 'failed' || response?.success === false) return 'failed_facebook';
     if (response?.success === true) return 'synced_facebook';
   }
 
+  for (const audit of auditRecords) {
+    if (!['COMMENT_HIDDEN', 'COMMENT_RESTORED', 'COMMENT_DELETED', 'COMMENT_OVERRIDE'].includes(audit.event_type)) continue;
+    const storedStatus = asRecord(audit.metadata)?.external_action_status;
+    if (
+      storedStatus === 'pending_facebook_sync' ||
+      storedStatus === 'synced_facebook' ||
+      storedStatus === 'failed_facebook'
+    ) {
+      return storedStatus;
+    }
+  }
+
   return 'none';
+}
+
+export function getModerationActionPresentation(action: {
+  action_type: ModerationActionType;
+  action_status: string;
+  performed_by: string | null;
+  facebook_response: Json | null;
+}) {
+  return {
+    action: action.action_type,
+    actor_id: action.performed_by,
+    outcome: action.action_status === 'failed' ? 'failed' as const
+      : action.action_status === 'pending' ? 'pending' as const
+        : 'success' as const,
+    api_response: action.facebook_response,
+  };
 }
 
 export function resolveCommentAssignments(
@@ -126,9 +245,9 @@ export function resolveCommentAssignments(
   };
 
   for (const action of actions) {
-    if (!['assigned', 'reassigned', 'claimed', 'released'].includes(action.action)) continue;
+    if (!['assigned', 'reassigned', 'claimed', 'released'].includes(action.action_type)) continue;
 
-    const state = getCommentState(action.api_response);
+    const state = getCommentState(action.facebook_response);
     let assignedTo: string;
     if (Object.prototype.hasOwnProperty.call(state, 'assigned_to')) {
       assignedTo = typeof state.assigned_to === 'string'
@@ -136,10 +255,10 @@ export function resolveCommentAssignments(
         : state.assigned_to === null
           ? ''
           : UNKNOWN_ASSIGNEE_ID;
-    } else if (action.action === 'released') {
+    } else if (action.action_type === 'released') {
       assignedTo = '';
-    } else if (action.action === 'claimed' && action.actor_id) {
-      assignedTo = action.actor_id;
+    } else if (action.action_type === 'claimed' && action.performed_by) {
+      assignedTo = action.performed_by;
     } else {
       assignedTo = UNKNOWN_ASSIGNEE_ID;
     }
@@ -148,11 +267,11 @@ export function resolveCommentAssignments(
   }
 
   for (const audit of auditRecords) {
-    if (!audit.entity_id || !audit.action.startsWith('COMMENT_')) continue;
-    const action = audit.action.slice('COMMENT_'.length).toLowerCase();
+    if (!audit.entity_id || !audit.event_type.startsWith('COMMENT_')) continue;
+    const action = audit.event_type.slice('COMMENT_'.length).toLowerCase();
     if (!['assigned', 'reassigned', 'claimed', 'released'].includes(action)) continue;
 
-    const details = asRecord(audit.details);
+    const details = asRecord(audit.metadata);
     let assignedTo: string;
     if (details && Object.prototype.hasOwnProperty.call(details, 'new_assignee')) {
       assignedTo = typeof details.new_assignee === 'string'
@@ -198,15 +317,16 @@ export async function loadCommentAssignments(
   ] = await Promise.all([
     supabase
       .from('moderation_actions')
-      .select('comment_id, action, actor_id, api_response, created_at')
+      .select('comment_id, action_type, performed_by, facebook_response, action_status, reason, created_at')
       .in('comment_id', commentIds)
-      .in('action', ['assigned', 'reassigned', 'claimed', 'released'])
+      .in('action_type', ['assigned', 'reassigned', 'claimed', 'released'])
       .order('created_at', { ascending: false }),
     supabase
       .from('audit_logs')
-      .select('entity_id, action, details, created_at, admin_id')
+      .select('entity_id, event_type, metadata, created_at, admin_id')
       .eq('entity_type', 'comment')
       .in('entity_id', commentIds)
+      .in('event_type', ['COMMENT_ASSIGNED', 'COMMENT_REASSIGNED', 'COMMENT_CLAIMED', 'COMMENT_RELEASED'])
       .order('created_at', { ascending: false }),
   ]);
 
@@ -217,22 +337,34 @@ export async function loadCommentAssignments(
 }
 
 export function getEscalationDetails(actions: Array<{
-  action: string;
-  reason: string;
-  api_response: unknown;
-}>, legacyNotifications: Array<{ title: string }> = []): { reason: string | null; priority: string | null } {
-  const escalation = actions.find((action) => action.action === 'escalated');
-  if (!escalation) return { reason: null, priority: null };
+  action_type: string;
+  reason: string | null;
+  facebook_response: unknown;
+}>, escalationNotifications: Array<{ title: string }> = [], auditRecords: Array<{
+  event_type: string;
+  metadata: unknown;
+}> = []): { reason: string | null; priority: string | null } {
+  const escalation = actions.find((action) => action.action_type === 'escalated');
+  const escalationAudit = auditRecords.find((audit) => {
+    const metadata = asRecord(audit.metadata);
+    return audit.event_type === 'COMMENT_ESCALATED' ||
+      (audit.event_type === 'COMMENT_OVERRIDE' && metadata?.new_status === 'escalated');
+  });
+  if (!escalation && !escalationAudit) return { reason: null, priority: null };
 
-  const state = getCommentState(escalation.api_response);
-  const response = asRecord(escalation.api_response);
+  const state = escalation ? getCommentState(escalation.facebook_response) : {};
+  const response = escalation ? asRecord(escalation.facebook_response) : null;
+  const auditMetadata = asRecord(escalationAudit?.metadata);
   const storedPriority = state.escalation_priority ?? response?.escalation_priority;
-  const legacyPriority = legacyNotifications
+  const notificationPriority = escalationNotifications
     .map((notification) => notification.title.match(/priority\s*\[(low|medium|high|urgent)\]/i)?.[1]?.toLowerCase())
     .find(Boolean);
-  const priority = storedPriority ?? legacyPriority;
+  const priority = auditMetadata?.escalation_priority ?? storedPriority ?? notificationPriority;
+  const reason = typeof auditMetadata?.reason === 'string'
+    ? auditMetadata.reason
+    : escalation?.reason || null;
   return {
-    reason: escalation.reason || null,
+    reason,
     priority: typeof priority === 'string' ? priority : null,
   };
 }

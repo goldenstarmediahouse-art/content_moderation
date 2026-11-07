@@ -22,7 +22,7 @@ interface SettingsViewProps {
     encryptionConfigured: boolean;
     openaiConfigured: boolean;
     appUrl: string;
-    webhookVerifyToken: string;
+    webhookVerifyTokenConfigured: boolean;
   };
 }
 
@@ -88,7 +88,7 @@ export function SettingsView({ admin, envStatus }: SettingsViewProps) {
 
         <div className="space-y-3 text-xs">
           <p className="text-charcoal-300 leading-relaxed">
-            In the Meta App Dashboard under <span className="text-charcoal-100 font-mono">Webhooks &gt; Page &gt; feed</span>, register this endpoint URL and verification phrase:
+            In the Meta App Dashboard under <span className="text-charcoal-100 font-mono">Webhooks &gt; Page &gt; feed</span>, register this endpoint URL and configure the verification phrase on the server:
           </p>
 
           <div className="space-y-1">
@@ -112,12 +112,11 @@ export function SettingsView({ admin, envStatus }: SettingsViewProps) {
 
           <div className="space-y-1">
             <span className="text-charcoal-500 font-medium">Verify Token Phrase (hub.verify_token):</span>
-            <input
-              type="text"
-              readOnly
-              value={envStatus.webhookVerifyToken}
-              className="w-full px-3 py-1.5 bg-charcoal-950 border border-charcoal-800 rounded text-charcoal-300 font-mono text-xs select-all"
-            />
+            <p className="px-3 py-1.5 bg-charcoal-950 border border-charcoal-800 rounded text-charcoal-300 font-mono text-xs">
+              {envStatus.webhookVerifyTokenConfigured
+                ? 'Configured on server (value hidden)'
+                : 'Missing server configuration'}
+            </p>
           </div>
         </div>
       </div>

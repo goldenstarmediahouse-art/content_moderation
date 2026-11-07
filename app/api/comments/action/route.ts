@@ -5,6 +5,7 @@ import { decryptToken } from '@/lib/crypto/token-encryption';
 import { hideFacebookComment, unhideFacebookComment } from '@/lib/facebook/graph-api';
 import { Database, EscalationPriority, ModerationActionType, ModerationStatus } from '@/types/database';
 import {
+  buildModerationRecords,
   canModerateAssignment,
   getExternalActionStatus,
   loadCommentAssignments,
@@ -89,10 +90,11 @@ export async function POST(request: NextRequest) {
     let isDeleted = comment.is_deleted;
     let finalReason = reason;
     let apiResponse: any = null;
+    let apiErrorMessage: string | null = null;
     let outcome: 'success' | 'failed' = 'success';
 
     // Fetch encrypted token if action requires external Meta Graph API call
-    let tokenRow: { encrypted_access_token: unknown } | null = null;
+    let tokenRow: Pick<Database['public']['Tables']['page_tokens']['Row'], 'encrypted_access_token'> | null = null;
     if ((action === 'hidden' || action === 'restored') && pageId) {
       const { data } = await supabase
         .from('page_tokens')
@@ -125,19 +127,21 @@ export async function POST(request: NextRequest) {
       case 'hidden':
         if (tokenRow?.encrypted_access_token) {
           try {
-            const decrypted = decryptToken(tokenRow.encrypted_access_token as any);
+            const decrypted = decryptToken(tokenRow.encrypted_access_token);
             const fbRes = await hideFacebookComment(comment.facebook_comment_id, decrypted);
-            apiResponse = fbRes;
             if (fbRes.success) {
+              apiResponse = fbRes.data ?? null;
               externalActionStatus = 'synced_facebook';
               isHidden = true;
             } else {
               externalActionStatus = 'failed_facebook';
               outcome = 'failed';
+              apiErrorMessage = fbRes.error || 'Facebook hide request failed.';
             }
           } catch {
             externalActionStatus = 'failed_facebook';
             outcome = 'failed';
+            apiErrorMessage = 'The stored Page token could not be decrypted.';
           }
         } else {
           // Pre-Facebook Phase: internal moderation decision preserved without false claim of Facebook execution
@@ -167,18 +171,20 @@ export async function POST(request: NextRequest) {
         isDeleted = false;
         if (tokenRow?.encrypted_access_token) {
           try {
-            const decrypted = decryptToken(tokenRow.encrypted_access_token as any);
+            const decrypted = decryptToken(tokenRow.encrypted_access_token);
             const fbRes = await unhideFacebookComment(comment.facebook_comment_id, decrypted);
-            apiResponse = fbRes;
             if (fbRes.success) {
+              apiResponse = fbRes.data ?? null;
               externalActionStatus = 'synced_facebook';
             } else {
               externalActionStatus = 'failed_facebook';
               outcome = 'failed';
+              apiErrorMessage = fbRes.error || 'Facebook restore request failed.';
             }
           } catch {
             externalActionStatus = 'failed_facebook';
             outcome = 'failed';
+            apiErrorMessage = 'The stored Page token could not be decrypted.';
           }
         } else {
           externalActionStatus = 'pending_facebook_sync';
@@ -211,28 +217,33 @@ export async function POST(request: NextRequest) {
       .eq('id', comment.id);
 
     if (updateErr) {
-      return NextResponse.json({ error: updateErr.message }, { status: 500 });
+      const error = `Internal comment update failed after the moderation operation. Facebook status: ${externalActionStatus}. Do not retry automatically; reconcile this comment before acting again.`;
+      console.error(`Comment state update failed for ${comment.id}:`, updateErr);
+      return NextResponse.json({ error, retrySafe: false }, { status: 500 });
     }
 
     // 5. Insert record into moderation_actions table
-    const { error: actionInsertError } = await supabase.from('moderation_actions').insert({
-      comment_id: comment.id,
-      action,
-      reason: finalReason || `Manual decision by ${admin.role} (${admin.full_name || admin.email})`,
-      actor_type: admin.role,
-      actor_id: admin.id,
-      api_response: {
-        facebook_response: apiResponse,
-        comment_state: {
-          external_action_status: externalActionStatus,
-          escalation_reason: action === 'escalated' ? reason : null,
-          escalation_priority: action === 'escalated' ? escalationPriority || 'medium' : null,
-        },
-      },
-      outcome,
+    const actionReason = finalReason || `Manual decision by ${admin.role} (${admin.full_name || admin.email})`;
+    const records = buildModerationRecords({
+      commentId: comment.id,
+      adminId: admin.id,
+      actionType: action,
+      reason: actionReason,
+      actionStatus: outcome,
+      facebookResponse: apiResponse,
+      errorMessage: outcome === 'failed' ? apiErrorMessage || 'Facebook action failed' : null,
+      previousStatus: comment.moderation_status,
+      newStatus,
+      externalActionStatus,
+      escalationPriority: action === 'escalated' ? escalationPriority || 'medium' : null,
+      isOverride: Boolean(isOverride),
+      timestamp: new Date().toISOString(),
     });
+    const { error: actionInsertError } = await supabase.from('moderation_actions').insert(records.action);
+    const warnings: string[] = [];
     if (actionInsertError) {
-      return NextResponse.json({ error: actionInsertError.message }, { status: 500 });
+      console.error(`Moderation action history insert failed for comment ${comment.id}:`, actionInsertError);
+      warnings.push('The decision was applied, but its moderation action history could not be recorded. Do not retry this decision.');
     }
 
     // 6. Create notifications for escalations or urgent decisions
@@ -246,33 +257,27 @@ export async function POST(request: NextRequest) {
 
       if (superAdmins) {
         for (const sa of superAdmins) {
-          await supabase.from('notifications').insert({
+          const { error: notificationError } = await supabase.from('notifications').insert({
             admin_id: sa.id,
             title: `CASE ESCALATED: Priority [${(escalationPriority || 'medium').toUpperCase()}]`,
             message: `Comment by ${comment.commenter_name || 'User'} was escalated by ${admin.full_name || admin.email}: "${reason}"`,
-            type: 'escalation',
-            severity: escalationPriority === 'urgent' ? 'critical' : escalationPriority === 'high' ? 'high' : 'medium',
-            comment_id: comment.id,
-            page_id: pageId,
+            notification_type: 'escalation',
+            related_comment_id: comment.id,
           });
+          if (notificationError) {
+            console.error(`Escalation notification failed for comment ${comment.id} and admin ${sa.id}:`, notificationError);
+            warnings.push('The escalation was saved, but one or more notifications could not be delivered.');
+          }
         }
       }
     }
 
     // 7. Audit Log
-    await supabase.from('audit_logs').insert({
-      admin_id: admin.id,
-      action: isOverride ? 'COMMENT_OVERRIDE' : `COMMENT_${action.toUpperCase()}`,
-      entity_type: 'comment',
-      entity_id: comment.id,
-      details: {
-        previous_status: comment.moderation_status,
-        new_status: newStatus,
-        reason: finalReason,
-        external_action_status: externalActionStatus,
-        outcome,
-      },
-    });
+    const { error: auditError } = await supabase.from('audit_logs').insert(records.audit);
+    if (auditError) {
+      console.error(`Moderation audit insert failed for comment ${comment.id}:`, auditError);
+      warnings.push('The decision was applied, but its audit log could not be recorded. Do not retry this decision.');
+    }
 
     return NextResponse.json({
       success: true,
@@ -280,6 +285,7 @@ export async function POST(request: NextRequest) {
       action,
       newStatus,
       externalActionStatus,
+      warnings,
     });
   } catch (err: any) {
     console.error('Error executing human moderation action:', err);

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   X,
   CheckCircle,
@@ -11,7 +11,6 @@ import {
   Clock,
   UserCheck,
   UserPlus,
-  Send,
   MessageSquare,
   Shield,
   Trash2,
@@ -64,33 +63,10 @@ export function CommentDetailModal({
   const [releaseReason, setReleaseReason] = useState('');
   const [showReleaseModal, setShowReleaseModal] = useState(false);
 
-  // Notes state
-  const [notes, setNotes] = useState<any[]>([]);
-  const [newNote, setNewNote] = useState('');
-  const [submittingNote, setSubmittingNote] = useState(false);
-
   const isSuperAdmin = currentAdmin.role === 'super_admin';
   const isAssignedToMe = comment?.assigned_to === currentAdmin.id;
   const isAssignedToOther = comment?.assigned_to && comment.assigned_to !== currentAdmin.id;
   const isLockedForMe = isAssignedToOther && !isSuperAdmin;
-
-  useEffect(() => {
-    if (comment?.id) {
-      fetchNotes(comment.id);
-    }
-  }, [comment?.id]);
-
-  async function fetchNotes(commentId: string) {
-    try {
-      const res = await fetch(`/api/comments/notes?commentId=${encodeURIComponent(commentId)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setNotes(data.notes || []);
-      }
-    } catch (err) {
-      console.error('Error fetching notes:', err);
-    }
-  }
 
   if (!comment) return null;
 
@@ -121,7 +97,10 @@ export function CommentDetailModal({
         throw new Error(data.error || 'Failed to complete moderation decision');
       }
 
-      setActionSuccess(`Decision "${actionType.toUpperCase()}" recorded successfully.`);
+      const warning = Array.isArray(data.warnings) && data.warnings.length > 0
+        ? ` Warning: ${data.warnings.join(' ')}`
+        : '';
+      setActionSuccess(`Decision "${actionType.toUpperCase()}" recorded successfully.${warning}`);
       setTimeout(() => {
         onActionComplete();
         onClose();
@@ -153,7 +132,10 @@ export function CommentDetailModal({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to claim case');
 
-      setActionSuccess('Case claimed successfully into your assigned queue.');
+      const warning = Array.isArray(data.warnings) && data.warnings.length > 0
+        ? ` Warning: ${data.warnings.join(' ')}`
+        : '';
+      setActionSuccess(`Case claimed successfully into your assigned queue.${warning}`);
       setTimeout(() => {
         onActionComplete();
       }, 500);
@@ -183,7 +165,10 @@ export function CommentDetailModal({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to assign case');
 
-      setActionSuccess('Case assigned successfully.');
+      const warning = Array.isArray(data.warnings) && data.warnings.length > 0
+        ? ` Warning: ${data.warnings.join(' ')}`
+        : '';
+      setActionSuccess(`Case assigned successfully.${warning}`);
       setTimeout(() => {
         onActionComplete();
       }, 500);
@@ -218,7 +203,10 @@ export function CommentDetailModal({
       if (!res.ok) throw new Error(data.error || 'Failed to release case');
 
       setShowReleaseModal(false);
-      setActionSuccess('Case released back to unassigned queue.');
+      const warning = Array.isArray(data.warnings) && data.warnings.length > 0
+        ? ` Warning: ${data.warnings.join(' ')}`
+        : '';
+      setActionSuccess(`Case released back to unassigned queue.${warning}`);
       setTimeout(() => {
         onActionComplete();
       }, 500);
@@ -226,33 +214,6 @@ export function CommentDetailModal({
       setActionError(err.message);
     } finally {
       setLoadingAction(null);
-    }
-  }
-
-  async function handleAddNote(e: React.FormEvent) {
-    e.preventDefault();
-    if (!newNote.trim()) return;
-
-    setSubmittingNote(true);
-    try {
-      const res = await fetch('/api/comments/notes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          commentId: comment?.id,
-          note: newNote.trim(),
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to add note');
-
-      setNotes((prev) => [...prev, data.note]);
-      setNewNote('');
-    } catch (err: any) {
-      alert(`Error saving internal note: ${err.message}`);
-    } finally {
-      setSubmittingNote(false);
     }
   }
 
@@ -304,7 +265,7 @@ export function CommentDetailModal({
           >
             <span>Internal Notes</span>
             <span className="px-1.5 py-0.2 rounded text-[10px] bg-charcoal-800 text-charcoal-300 font-mono">
-              {notes.length}
+              Unavailable
             </span>
           </button>
           <button
@@ -648,58 +609,9 @@ export function CommentDetailModal({
           {/* TAB 2: PRIVATE INTERNAL NOTES */}
           {activeTab === 'notes' && (
             <div className="space-y-4">
-              <div className="p-3 rounded bg-charcoal-950 border border-charcoal-800 text-[11px] text-charcoal-400">
-                🔒 <strong>Confidentiality Notice:</strong> Internal collaboration notes are strictly visible to church administrators and are never published as Facebook comments or replies.
-              </div>
-
-              {/* Notes List */}
-              <div className="space-y-2.5 max-h-60 overflow-y-auto">
-                {notes.length === 0 ? (
-                  <p className="text-charcoal-500 text-center py-6 italic">
-                    No internal notes added to this case yet.
-                  </p>
-                ) : (
-                  notes.map((n) => (
-                    <div key={n.id} className="p-3 rounded bg-charcoal-950 border border-charcoal-800 space-y-1">
-                      <div className="flex items-center justify-between text-[11px]">
-                        <span className="font-semibold text-charcoal-200">
-                          {n.admin?.full_name || n.admin?.email || 'Administrator'}
-                          <span className="ml-1.5 font-mono text-[10px] text-charcoal-500 uppercase">
-                            ({n.admin?.role === 'super_admin' ? 'Super Admin' : 'Moderator'})
-                          </span>
-                        </span>
-                        <span className="text-charcoal-500 font-mono">
-                          {new Date(n.created_at).toLocaleString()}
-                        </span>
-                      </div>
-                      <p className="text-charcoal-300 leading-relaxed whitespace-pre-wrap select-text">
-                        {n.note}
-                      </p>
-                    </div>
-                  ))
-                )}
-              </div>
-
-              {/* Add Note Input */}
-              <form onSubmit={handleAddNote} className="space-y-2 pt-2 border-t border-charcoal-800">
-                <textarea
-                  rows={2}
-                  value={newNote}
-                  onChange={(e) => setNewNote(e.target.value)}
-                  placeholder="Write an internal note or context for other moderators..."
-                  className="w-full px-3 py-2 bg-charcoal-950 border border-charcoal-800 rounded text-charcoal-100 placeholder-charcoal-500 focus:outline-none focus:border-charcoal-600"
-                />
-                <div className="flex justify-end">
-                  <button
-                    type="submit"
-                    disabled={submittingNote || !newNote.trim()}
-                    className="flex items-center space-x-1.5 px-3 py-1.5 rounded bg-charcoal-800 hover:bg-charcoal-700 text-charcoal-100 border border-charcoal-700 font-medium disabled:opacity-50"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>{submittingNote ? 'Saving...' : 'Add Internal Note'}</span>
-                  </button>
-                </div>
-              </form>
+              <p className="p-3 rounded bg-charcoal-950 border border-charcoal-800 text-[11px] text-charcoal-400">
+                Internal notes are unavailable because this Supabase database does not contain the required table. No note data has been loaded or saved.
+              </p>
             </div>
           )}
 

@@ -26,7 +26,7 @@ export default async function ReportsPage() {
   // Fetch actions
   const { data: actions } = await supabase
     .from('moderation_actions')
-    .select('*, actor:admin_users(full_name, email, role)')
+    .select('*')
     .order('created_at', { ascending: false });
 
   // Fetch active moderators

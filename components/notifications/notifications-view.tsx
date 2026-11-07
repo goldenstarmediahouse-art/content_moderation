@@ -3,9 +3,19 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Bell, Check, AlertTriangle, ShieldAlert, CheckCheck, ExternalLink } from 'lucide-react';
+import { Bell, Check, CheckCheck, ExternalLink } from 'lucide-react';
 import { Database } from '@/types/database';
-import { SeverityBadge } from '@/components/ui/badge';
+import { Badge } from '@/components/ui/badge';
+
+function getNotificationVariant(type: string): 'threat' | 'warning' | 'info' {
+  if (['threat', 'escalation', 'job_failure', 'integration_error'].includes(type)) {
+    return 'threat';
+  }
+  if (['review_required', 'assignment', 'reassignment'].includes(type)) {
+    return 'warning';
+  }
+  return 'info';
+}
 
 interface NotificationsViewProps {
   initialNotifications: Database['public']['Tables']['notifications']['Row'][];
@@ -98,22 +108,20 @@ export function NotificationsView({ initialNotifications }: NotificationsViewPro
                 <div className="flex items-center space-x-2 text-xs">
                   <span
                     className={`font-semibold uppercase tracking-wide ${
-                      notif.severity === 'critical' ? 'text-red-400' : 'text-charcoal-200'
+                      getNotificationVariant(notif.notification_type) === 'threat' ? 'text-red-400' : 'text-charcoal-200'
                     }`}
                   >
                     {notif.title}
                   </span>
                   <span className="text-charcoal-600">•</span>
-                  <SeverityBadge severity={notif.severity} />
-                  <span className="text-charcoal-600">•</span>
-                  <span className="text-[11px] font-mono text-charcoal-500">
-                    {new Date(notif.created_at).toLocaleString()}
-                  </span>
+                  <Badge variant={getNotificationVariant(notif.notification_type)}>
+                    {notif.notification_type.replace(/_/g, ' ')}
+                  </Badge>
                 </div>
 
                 <p className="text-xs text-charcoal-300 leading-relaxed">{notif.message}</p>
 
-                {notif.comment_id && (
+                {notif.related_comment_id && (
                   <div className="pt-1">
                     <Link
                       href="/queue"

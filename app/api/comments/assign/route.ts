@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireActiveAdmin } from '@/lib/auth/session';
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
+  buildAssignmentRecords,
   canClaimAssignment,
   canReassignAssignment,
   canReleaseAssignment,
@@ -39,11 +40,6 @@ export async function POST(request: NextRequest) {
     }
     const assignments = await loadCommentAssignments(supabase, [commentRow.id]);
     const currentAssignedTo = assignments.get(commentRow.id)?.assignedTo || null;
-
-    const { data: commentPost } = commentRow.post_id
-      ? await supabase.from('posts').select('page_id').eq('id', commentRow.post_id).maybeSingle()
-      : { data: null };
-    const pageId = commentPost?.page_id || null;
 
     let newAssignedTo: string | null = null;
     let actionType: 'claimed' | 'assigned' | 'reassigned' | 'released' = 'claimed';
@@ -116,56 +112,54 @@ export async function POST(request: NextRequest) {
     }
 
     // Store assignment state in the action history because the comments table has no assignment columns.
-    const assignmentTime = newAssignedTo ? new Date().toISOString() : null;
-    const { error: actionError } = await supabase.from('moderation_actions').insert({
-      comment_id: commentRow.id,
-      action: actionType,
-      reason: reason ? `${actionDescription} (${reason})` : actionDescription,
-      actor_type: admin.role,
-      actor_id: admin.id,
-      outcome: 'success',
-      api_response: {
-        comment_state: {
-          assigned_to: newAssignedTo,
-          assigned_at: assignmentTime,
-        },
-      },
+    const now = new Date().toISOString();
+    const assignmentTime = newAssignedTo ? now : null;
+    const records = buildAssignmentRecords({
+      commentId: commentRow.id,
+      actionType,
+      adminId: admin.id,
+      description: actionDescription,
+      reason: reason ?? null,
+      previousAssignee: currentAssignedTo,
+      newAssignee: newAssignedTo,
+      assignedAt: assignmentTime,
+      timestamp: now,
     });
+    const { error: actionError } = await supabase.from('moderation_actions').insert(records.action);
     if (actionError) {
       return NextResponse.json({ error: actionError.message }, { status: 500 });
     }
 
+    const warnings: string[] = [];
+
     // 5. Notify target moderator if newly assigned or reassigned
     if (newAssignedTo && newAssignedTo !== admin.id) {
-      await supabase.from('notifications').insert({
+      const { error: notificationError } = await supabase.from('notifications').insert({
         admin_id: newAssignedTo,
         title: actionType === 'reassigned' ? 'Case Reassigned To You' : 'New Case Assigned To You',
         message: `${admin.full_name || admin.email} assigned comment "${commentRow.message.slice(0, 80)}" to your queue.`,
-        type: actionType === 'reassigned' ? 'reassignment' : 'assignment',
-        severity: 'medium',
-        comment_id: commentRow.id,
-        page_id: pageId,
+        notification_type: actionType === 'reassigned' ? 'reassignment' : 'assignment',
+        related_comment_id: commentRow.id,
       });
+      if (notificationError) {
+        console.error(`Assignment notification failed for comment ${commentRow.id}:`, notificationError);
+        warnings.push('Assignment was saved, but its notification could not be delivered.');
+      }
     }
 
     // 6. Audit Log
-    await supabase.from('audit_logs').insert({
-      admin_id: admin.id,
-      action: `COMMENT_${actionType.toUpperCase()}`,
-      entity_type: 'comment',
-      entity_id: commentRow.id,
-      details: {
-        previous_assignee: currentAssignedTo,
-        new_assignee: newAssignedTo,
-        reason,
-      },
-    });
+    const { error: auditError } = await supabase.from('audit_logs').insert(records.audit);
+    if (auditError) {
+      console.error(`Assignment audit insert failed for comment ${commentRow.id}:`, auditError);
+      warnings.push('Assignment was saved, but its audit log could not be recorded. Do not retry this assignment.');
+    }
 
     return NextResponse.json({
       success: true,
       commentId: commentRow.id,
       actionType,
       assigned_to: newAssignedTo,
+      warnings,
     });
   } catch (err: any) {
     console.error('Error handling comment assignment:', err);

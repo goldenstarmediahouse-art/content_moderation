@@ -38,10 +38,11 @@ export async function POST(request: NextRequest) {
     // Audit log
     await supabase.from('audit_logs').insert({
       admin_id: admin.id,
-      action: 'UPDATE_MODERATION_RULE',
+      event_type: 'UPDATE_MODERATION_RULE',
+      description: 'Updated moderation rule',
       entity_type: 'moderation_rules',
       entity_id: ruleId,
-      details: updatePayload as any,
+      metadata: updatePayload as any,
     });
 
     return NextResponse.json({ success: true, rule: updatedRule });

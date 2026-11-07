@@ -64,11 +64,16 @@ export async function POST(request: NextRequest) {
     if (!pageFacebookId || !Array.isArray(entry.changes)) continue;
 
     // Check if the page is connected and monitored
-    const { data: pageRecord } = await supabase
+    const { data: pageRecord, error: pageError } = await supabase
       .from('facebook_pages')
       .select('id, is_monitored, name')
       .eq('page_id', pageFacebookId)
       .single();
+
+    if (pageError && pageError.code !== 'PGRST116') {
+      console.error(`Failed to load Facebook Page ${pageFacebookId} for webhook:`, pageError);
+      return NextResponse.json({ error: 'Failed to load connected Facebook Page.' }, { status: 500 });
+    }
 
     if (!pageRecord || !pageRecord.is_monitored) {
       // Unmonitored or unknown page
@@ -86,55 +91,79 @@ export async function POST(request: NextRequest) {
 
       const commentFacebookId = val.comment_id;
       const postFacebookId = val.post_id;
+      if (!commentFacebookId) {
+        console.error('Rejected Facebook comment webhook without a comment ID.');
+        return NextResponse.json({ error: 'Facebook comment ID is required.' }, { status: 400 });
+      }
       const messageText = val.message || '';
       const commenterId = val.from?.id || val.sender_id || null;
       const commenterName = val.from?.name || val.sender_name || 'Facebook User';
       const createdUnixTime = val.created_time
         ? new Date(typeof val.created_time === 'number' ? val.created_time * 1000 : val.created_time)
         : new Date();
+      if (!Number.isFinite(createdUnixTime.getTime())) {
+        console.error(`Rejected malformed creation time for Facebook comment ${commentFacebookId}.`);
+        return NextResponse.json({ error: 'Facebook comment has an invalid created_time.' }, { status: 400 });
+      }
 
       const sourceEventId = `fb_${commentFacebookId}_${val.verb}_${val.created_time || Date.now()}`;
 
       // Ensure post record exists if post ID is present
       let postId: string | null = null;
       if (postFacebookId) {
-        const { data: postRecord } = await supabase
+        const { data: postRecord, error: postLookupError } = await supabase
           .from('posts')
           .select('id')
           .eq('facebook_post_id', postFacebookId)
           .maybeSingle();
 
+        if (postLookupError) {
+          console.error(`Failed to load Facebook post ${postFacebookId} for webhook:`, postLookupError);
+          return NextResponse.json({ error: 'Failed to load Facebook post record.' }, { status: 500 });
+        }
+
         if (postRecord) {
           postId = postRecord.id;
         } else {
-          const { data: newPost } = await supabase
+          const { data: newPost, error: postInsertError } = await supabase
             .from('posts')
             .insert({
               page_id: pageRecord.id,
               facebook_post_id: postFacebookId,
               message: 'Facebook Post',
-              published_at: createdUnixTime.toISOString(),
+              published_at: null,
             })
             .select('id')
             .single();
 
+          if (postInsertError) {
+            console.error(`Failed to insert Facebook post ${postFacebookId} for webhook:`, postInsertError);
+            return NextResponse.json({ error: 'Failed to save Facebook post record.' }, { status: 500 });
+          }
           if (newPost) postId = newPost.id;
         }
       }
 
       // Check for duplicate comment ingestion
-      const { data: existingComment } = await supabase
+      const { data: existingComment, error: commentLookupError } = await supabase
         .from('comments')
-        .select('id, moderation_status')
+        .select('id, message, moderation_status')
         .eq('facebook_comment_id', commentFacebookId)
         .maybeSingle();
+      if (commentLookupError) {
+        console.error(`Failed to load Facebook comment ${commentFacebookId} for webhook:`, commentLookupError);
+        return NextResponse.json({ error: 'Failed to load existing Facebook comment.' }, { status: 500 });
+      }
 
       let commentId: string;
+      const shouldQueueModeration = !existingComment ||
+        existingComment.moderation_status === 'pending' ||
+        (val.verb === 'edit' && existingComment.message !== messageText);
 
       if (existingComment) {
         commentId = existingComment.id;
         // Update existing comment message if edited
-        await supabase
+        const { error: commentUpdateError } = await supabase
           .from('comments')
           .update({
             message: messageText,
@@ -144,7 +173,16 @@ export async function POST(request: NextRequest) {
             updated_at: new Date().toISOString(),
           })
           .eq('id', commentId);
+        if (commentUpdateError) {
+          console.error(`Failed to update Facebook comment ${commentFacebookId}:`, commentUpdateError);
+          return NextResponse.json({ error: 'Failed to update Facebook comment.' }, { status: 500 });
+        }
       } else {
+        if (!postId) {
+          console.error(`Facebook comment ${commentFacebookId} has no associated post record.`);
+          return NextResponse.json({ error: 'Facebook comment is missing its associated post.' }, { status: 400 });
+        }
+
         const { data: insertedComment, error: insertError } = await supabase
           .from('comments')
           .insert({
@@ -165,27 +203,46 @@ export async function POST(request: NextRequest) {
 
         if (insertError || !insertedComment) {
           console.error('Failed to insert incoming comment:', insertError);
-          continue;
+          return NextResponse.json({ error: 'Failed to insert incoming Facebook comment.' }, { status: 500 });
         }
 
         commentId = insertedComment.id;
       }
 
       // Queue moderation job for AI analysis
-      const { data: jobRecord } = await supabase
-        .from('moderation_jobs')
-        .insert({
-          comment_id: commentId,
-          status: 'pending',
-        })
-        .select('id')
-        .single();
+      if (shouldQueueModeration) {
+        const { data: activeJob, error: activeJobError } = await supabase
+          .from('moderation_jobs')
+          .select('id')
+          .eq('comment_id', commentId)
+          .in('status', ['pending', 'processing'])
+          .limit(1)
+          .maybeSingle();
 
-      if (jobRecord) {
-        // Kick off processing in the background without awaiting to keep webhook response fast
-        processModerationJob(jobRecord.id).catch((err) => {
-          console.error(`Background job execution error for job ${jobRecord.id}:`, err);
-        });
+        if (activeJobError) {
+          console.error(`Failed to check active moderation jobs for comment ${commentId}:`, activeJobError);
+          return NextResponse.json({ error: 'Failed to check moderation job status.' }, { status: 500 });
+        }
+
+        if (!activeJob) {
+          const { data: jobRecord, error: jobError } = await supabase
+            .from('moderation_jobs')
+            .insert({
+              comment_id: commentId,
+              status: 'pending',
+            })
+            .select('id')
+            .single();
+
+          if (jobError || !jobRecord) {
+            console.error(`Failed to queue moderation job for comment ${commentId}:`, jobError);
+            return NextResponse.json({ error: 'Failed to queue moderation job.' }, { status: 500 });
+          }
+
+          processModerationJob(jobRecord.id).catch((err) => {
+            console.error(`Background job execution error for job ${jobRecord.id}:`, err);
+          });
+        }
       }
     }
   }

@@ -17,7 +17,6 @@ export default async function NotificationsPage() {
   const { data: notifications } = await supabase
     .from('notifications')
     .select('*')
-    .order('created_at', { ascending: false })
     .limit(100);
 
   return (
